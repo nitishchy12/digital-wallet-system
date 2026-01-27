@@ -71,15 +71,17 @@ const Profile = () => {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Account Type
+            KYC Status
           </label>
           <div className="flex items-center p-3 bg-gray-50 rounded-lg">
             <span className={`px-3 py-1 text-sm font-medium rounded-full ${
-              user?.role === 'admin' 
-                ? 'bg-purple-100 text-purple-800'
-                : 'bg-blue-100 text-blue-800'
+              user?.kycStatus === 'verified' 
+                ? 'bg-green-100 text-green-800'
+                : user?.kycStatus === 'rejected'
+                ? 'bg-red-100 text-red-800'
+                : 'bg-yellow-100 text-yellow-800'
             }`}>
-              {user?.role?.charAt(0).toUpperCase() + user?.role?.slice(1) || 'User'}
+              {user?.kycStatus?.charAt(0).toUpperCase() + user?.kycStatus?.slice(1)}
             </span>
           </div>
         </div>

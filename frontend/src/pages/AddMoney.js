@@ -65,32 +65,15 @@ const AddMoney = () => {
     setIsLoading(true);
 
     try {
-      // Ensure payment gateway is uppercase
-      const paymentGateway = selectedMethod.toUpperCase();
-      
       // Create payment order
       const orderResponse = await api.post('/payment/create-order', {
         amount: amountNum,
-        paymentGateway: paymentGateway
+        paymentGateway: selectedMethod.toUpperCase()
       });
 
-      const { transaction, newBalance } = orderResponse.data.data;
+      const { transaction, paymentData } = orderResponse.data.data;
 
-      // Handle MOCK payment (instant success)
-      if (paymentGateway === 'MOCK' || selectedMethod.toLowerCase() === 'mock') {
-        toast.success(`₹${amountNum.toLocaleString('en-IN')} added to wallet successfully!`);
-        // Trigger wallet update event
-        window.dispatchEvent(new CustomEvent('walletUpdate', {
-          detail: { newBalance }
-        }));
-        navigate('/');
-        setIsLoading(false);
-        return;
-      }
-
-      // Handle Razorpay payment
-      if (paymentGateway === 'RAZORPAY' || selectedMethod.toLowerCase() === 'razorpay') {
-        const { paymentData } = orderResponse.data.data;
+      if (selectedMethod === 'razorpay') {
         // Load Razorpay script
         const script = document.createElement('script');
         script.src = 'https://checkout.razorpay.com/v1/checkout.js';
@@ -141,12 +124,7 @@ const AddMoney = () => {
         };
         
         document.body.appendChild(script);
-        return; // Exit early for Razorpay
       }
-
-      // If we reach here, payment method not handled
-      toast.error('Payment method not supported');
-      setIsLoading(false);
     } catch (error) {
       console.error('Payment initiation failed:', error);
       toast.error('Failed to initiate payment');

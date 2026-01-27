@@ -6,7 +6,6 @@ import {
   FiFilter, 
   FiDownload, 
   FiTrendingUp, 
-  FiTrendingDown, 
   FiPlus,
   FiSend,
   FiRefreshCw
@@ -22,10 +21,6 @@ const Transactions = () => {
   const [refreshing, setRefreshing] = useState(false);
 
   const navigate = useNavigate();
-
-  useEffect(() => {
-    fetchTransactions();
-  }, [filter, currentPage]);
 
   const fetchTransactions = async () => {
     try {
@@ -49,6 +44,11 @@ const Transactions = () => {
       setRefreshing(false);
     }
   };
+
+  useEffect(() => {
+    fetchTransactions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, currentPage]);
 
   const handleRefresh = async () => {
     setRefreshing(true);

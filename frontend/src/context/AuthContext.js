@@ -1,13 +1,10 @@
-/**
- * Auth Context - Simplified (Access Token Only)
- * Senior Approach: Simple, stable, works
- */
-
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
 const AuthContext = createContext();
+
+/* ================= INITIAL STATE ================= */
 
 const initialState = {
   user: null,
@@ -17,25 +14,30 @@ const initialState = {
   requiresVerification: false
 };
 
+/* ================= REDUCER ================= */
+
 const authReducer = (state, action) => {
   switch (action.type) {
     case 'SET_LOADING':
       return { ...state, loading: action.payload };
-    
+
     case 'LOGIN_SUCCESS':
-      // Store access token only
       localStorage.setItem('accessToken', action.payload.accessToken);
+      localStorage.setItem('user', JSON.stringify(action.payload.user));
+
       return {
         ...state,
         user: action.payload.user,
         token: action.payload.accessToken,
         isAuthenticated: true,
         loading: false,
-        requiresVerification: action.payload.requiresVerification || false
+        requiresVerification: false
       };
-    
+
     case 'LOGOUT':
       localStorage.removeItem('accessToken');
+      localStorage.removeItem('user');
+
       return {
         ...state,
         user: null,
@@ -44,143 +46,115 @@ const authReducer = (state, action) => {
         loading: false,
         requiresVerification: false
       };
-    
+
     case 'UPDATE_USER':
+      localStorage.setItem(
+        'user',
+        JSON.stringify({ ...state.user, ...action.payload })
+      );
       return {
         ...state,
         user: { ...state.user, ...action.payload }
       };
-    
-    case 'SET_VERIFICATION_REQUIRED':
-      return {
-        ...state,
-        requiresVerification: action.payload
-      };
-    
+
     default:
       return state;
   }
 };
 
+/* ================= PROVIDER ================= */
+
 export const AuthProvider = ({ children }) => {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
-  // Check if user is authenticated on app load
+  /* ===== Restore auth from localStorage on refresh ===== */
   useEffect(() => {
-    const checkAuth = async () => {
-      const token = localStorage.getItem('accessToken');
-      
-      if (token) {
-        try {
-          const response = await api.get('/user/profile');
-          dispatch({
-            type: 'LOGIN_SUCCESS',
-            payload: {
-              user: response.data.data,
-              accessToken: token,
-              requiresVerification: !response.data.data.isVerified
-            }
-          });
-        } catch (error) {
-          console.error('Auth check failed:', error);
-          dispatch({ type: 'LOGOUT' });
-        }
-      } else {
-        dispatch({ type: 'SET_LOADING', payload: false });
-      }
-    };
+    const token = localStorage.getItem('accessToken');
+    const savedUser = localStorage.getItem('user');
 
-    checkAuth();
+    if (token && savedUser) {
+      dispatch({
+        type: 'LOGIN_SUCCESS',
+        payload: {
+          accessToken: token,
+          user: JSON.parse(savedUser)
+        }
+      });
+    } else {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
   }, []);
+
+  /* ================= LOGIN ================= */
 
   const login = async (email, password) => {
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
-      
+
       const response = await api.post('/auth/login', { email, password });
-      
-      if (response.data.success) {
-        dispatch({
-          type: 'LOGIN_SUCCESS',
-          payload: {
-            user: response.data.data.user,
-            accessToken: response.data.data.accessToken,
-            requiresVerification: response.data.data.requiresVerification || false
-          }
-        });
-        
-        toast.success('Login successful!');
-        return { success: true };
-      }
-      
+
+      dispatch({
+        type: 'LOGIN_SUCCESS',
+        payload: response.data.data
+      });
+
+      toast.success('Login successful!');
+      return { success: true };
+
     } catch (error) {
       dispatch({ type: 'SET_LOADING', payload: false });
       const message = error.response?.data?.message || 'Login failed';
-      
-      // Handle specific error codes
-      if (error.response?.data?.code === 'ACCOUNT_NOT_VERIFIED') {
-        dispatch({ type: 'SET_VERIFICATION_REQUIRED', payload: true });
-      }
-      
+      toast.error(message);
       return { success: false, message };
     }
   };
+
+  /* ================= REGISTER ================= */
 
   const register = async (userData) => {
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
-      
+
       const response = await api.post('/auth/register', userData);
-      
+
       dispatch({ type: 'SET_LOADING', payload: false });
-      
-      if (response.data.success) {
-        toast.success('Registration successful! Please verify your email with OTP.');
-        return { 
-          success: true, 
-          data: response.data.data 
-        };
-      }
-      
+      toast.success('Registration successful! Please verify your email.');
+
+      return { success: true, data: response.data.data };
+
     } catch (error) {
       dispatch({ type: 'SET_LOADING', payload: false });
       const message = error.response?.data?.message || 'Registration failed';
+      toast.error(message);
       return { success: false, message };
     }
   };
 
+  /* ================= VERIFY OTP ================= */
+
   const verifyOTP = async (email, otp) => {
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
-      
+
       const response = await api.post('/auth/verify-otp', { email, otp });
-      
-      if (response.data.success) {
-        dispatch({
-          type: 'LOGIN_SUCCESS',
-          payload: {
-            user: response.data.data.user,
-            accessToken: response.data.data.accessToken,
-            requiresVerification: false
-          }
-        });
-        
-        toast.success('Account verified successfully! Wallet created.');
-        return { success: true };
-      }
-      
+
+      dispatch({
+        type: 'LOGIN_SUCCESS',
+        payload: response.data.data
+      });
+
+      toast.success('Account verified successfully!');
+      return { success: true };
+
     } catch (error) {
       dispatch({ type: 'SET_LOADING', payload: false });
       const message = error.response?.data?.message || 'OTP verification failed';
-      
-      // Show remaining attempts if available
-      if (error.response?.data?.remainingAttempts !== undefined) {
-        toast.error(`${message} (${error.response.data.remainingAttempts} attempts remaining)`);
-      }
-      
+      toast.error(message);
       return { success: false, message };
     }
   };
+
+  /* ================= RESEND OTP ================= */
 
   const resendOTP = async (email) => {
     try {
@@ -189,9 +163,12 @@ export const AuthProvider = ({ children }) => {
       return { success: true };
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to resend OTP';
+      toast.error(message);
       return { success: false, message };
     }
   };
+
+  /* ================= LOGOUT ================= */
 
   const logout = async () => {
     try {
@@ -204,9 +181,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const updateUser = (userData) => {
-    dispatch({ type: 'UPDATE_USER', payload: userData });
-  };
+  /* ================= CONTEXT VALUE ================= */
 
   const value = {
     ...state,
@@ -215,7 +190,8 @@ export const AuthProvider = ({ children }) => {
     verifyOTP,
     resendOTP,
     logout,
-    updateUser
+    updateUser: (data) =>
+      dispatch({ type: 'UPDATE_USER', payload: data })
   };
 
   return (
@@ -224,6 +200,8 @@ export const AuthProvider = ({ children }) => {
     </AuthContext.Provider>
   );
 };
+
+/* ================= HOOK ================= */
 
 export const useAuth = () => {
   const context = useContext(AuthContext);

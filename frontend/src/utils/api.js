@@ -1,8 +1,3 @@
-/**
- * API Client with Axios Interceptor
- * Simplified - Access Token Only (Senior Approach)
- */
-
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -15,7 +10,7 @@ const api = axios.create({
   }
 });
 
-// Request interceptor - Auto-attach access token
+// Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('accessToken');
@@ -24,73 +19,68 @@ api.interceptors.request.use(
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-// Response interceptor - Handle errors and auto-logout on 401
+// Response interceptor to handle errors
 api.interceptors.response.use(
   (response) => {
     return response;
   },
   async (error) => {
-    const originalRequest = error.config;
-
     // Handle network errors
     if (!error.response) {
       toast.error('Network error. Please check your connection.');
       return Promise.reject(error);
     }
 
+    // Handle other HTTP errors
     const status = error.response.status;
-    const code = error.response.data?.code;
     const message = error.response.data?.message || 'An error occurred';
 
-    // Handle 401 - Token expired or invalid
-    if (status === 401) {
-      // Clear token and redirect to login
-      localStorage.removeItem('accessToken');
-      
-      // Don't show error if already on login page
-      if (window.location.pathname !== '/login') {
-        toast.error('Session expired. Please login again.');
-        window.location.href = '/login';
-      }
-      
-      return Promise.reject(error);
-    }
-
-    // Handle validation errors (400 with errors array)
-    if (status === 400 && error.response.data?.errors) {
-      const validationErrors = error.response.data.errors;
-      validationErrors.forEach(err => {
-        toast.error(`${err.field}: ${err.message}`);
-      });
-      return Promise.reject(error);
-    }
-
-    // Handle specific error codes
-    switch (code) {
-      case 'ACCOUNT_NOT_VERIFIED':
-        toast.error('Please verify your email first');
-        break;
-      case 'INSUFFICIENT_BALANCE':
-        toast.error(message);
-        break;
-      case 'WALLET_NOT_FOUND':
-        toast.error('Wallet not found. Please contact support.');
-        break;
-      case 'TOKEN_EXPIRED':
-        toast.error('Session expired. Please login again.');
-        localStorage.removeItem('accessToken');
-        window.location.href = '/login';
-        break;
-      default:
-        // Show error message from server
-        if (message && status !== 401) {
+    switch (status) {
+      case 400:
+        // Bad request - usually validation errors
+        if (error.response.data?.errors) {
+          const validationErrors = error.response.data.errors;
+          validationErrors.forEach(err => {
+            toast.error(`${err.field}: ${err.message}`);
+          });
+        } else {
           toast.error(message);
         }
+        break;
+
+      case 401:
+        // Unauthorized
+        toast.error('Please login to continue');
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+        break;
+
+      case 403:
+        // Forbidden
+        toast.error('Access denied');
+        break;
+
+      case 404:
+        // Not found
+        toast.error('Resource not found');
+        break;
+
+      case 429:
+        // Too many requests
+        toast.error('Too many requests. Please try again later.');
+        break;
+
+      case 500:
+        // Server error
+        toast.error('Server error. Please try again later.');
+        break;
+
+      default:
+        toast.error(message);
     }
 
     return Promise.reject(error);

@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
 const UserSchema = new mongoose.Schema(
-  {
+{
     name: {
       type: String,
       required: true,
@@ -43,6 +43,8 @@ const UserSchema = new mongoose.Schema(
     verificationOTP: String,
     otpExpiry: Date,
 
+    refreshToken: String,
+
     qrCode: String,
 
     role: {
@@ -52,6 +54,10 @@ const UserSchema = new mongoose.Schema(
     },
 
     lastLogin: Date,
+
+    // Password reset
+    resetPasswordToken: String,
+    resetPasswordExpire: Date,
   },
   { timestamps: true }
 );
@@ -71,11 +77,9 @@ UserSchema.methods.comparePassword = function (password) {
 /* 📱 QR Payload */
 UserSchema.methods.generateQRData = function () {
   return {
-    userId: this._id.toString(),
+    userId: this._id,
     name: this.name,
     phone: this.phone,
-    email: this.email,
-    type: 'PAYMENT_REQUEST'
   };
 };
 

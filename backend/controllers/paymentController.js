@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
@@ -27,33 +28,35 @@ const createPaymentOrder = async (req, res) => {
       });
     }
 
-    // Get wallet (SINGLE SOURCE OF TRUTH)
-    const wallet = await Wallet.findOne({ userId });
-    if (!wallet) {
-      return res.status(404).json({
-        success: false,
-        code: 'WALLET_NOT_FOUND',
-        message: 'Wallet not found. Please contact support.'
-      });
-    }
+    // Atomically ensure wallet exists and increment balance
+    const wallet = await Wallet.findOneAndUpdate(
+      { userId },
+      {
+        $setOnInsert: {
+          userId,
+          currency: 'INR',
+        },
+        $inc: { balance: amount }
+      },
+      { new: true, upsert: true }
+    );
 
-    // Generate unique transaction ID
-    const transactionId = `PAY${Date.now()}${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+    // Create transaction record
+    const transactionId = crypto.randomBytes(12).toString('hex');
 
-    // Create transaction
-    const transaction = new Transaction({
+    const transaction = await Transaction.create({
       transactionId,
       receiverId: userId,
       amount,
       type: 'ADD_MONEY',
-      status: 'SUCCESS'
+      description: 'Add money to wallet (Mock Payment)',
+      paymentGateway: paymentGateway || 'MOCK',
+      status: 'SUCCESS',
+      processedAt: new Date(),
+      balanceSnapshot: {
+        receiverBalance: wallet.balance
+      }
     });
-
-    // Update wallet balance
-    wallet.balance += amount;
-    
-    await transaction.save();
-    await wallet.save();
 
     // Emit socket event
     if (global.io) {
@@ -69,8 +72,7 @@ const createPaymentOrder = async (req, res) => {
       message: `₹${amount} added to wallet successfully (Mock)`,
       data: {
         transaction: transaction.toObject(),
-        newBalance: wallet.balance,
-        formattedBalance: `₹${wallet.balance.toLocaleString('en-IN')}`
+        newBalance: wallet.balance
       }
     });
 

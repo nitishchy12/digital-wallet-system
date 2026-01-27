@@ -76,8 +76,34 @@ const sendWelcomeEmail = async (email, name) => {
   }
 };
 
+/* ================= RESET PASSWORD EMAIL ================= */
+
+const sendResetPasswordEmail = async (email, name, resetLink) => {
+  try {
+    const transporter = createTransporter();
+    await transporter.sendMail({
+      from: `"Digital Wallet" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Reset Your Digital Wallet Password",
+      html: `
+        <h2>Hello ${name},</h2>
+        <p>You requested to reset your Digital Wallet password.</p>
+        <p>Click the link below to set a new password (valid for <b>15 minutes</b>):</p>
+        <p><a href="${resetLink}" target="_blank" rel="noopener noreferrer">Reset Password</a></p>
+        <p>If you did not request this, you can safely ignore this email.</p>
+        <br/>
+        <p>— Digital Wallet Team</p>
+      `,
+    });
+  } catch (error) {
+    console.error("❌ Reset password email error:", error);
+    throw new Error("Reset password email failed");
+  }
+};
+
 module.exports = {
   sendOTPEmail,
   sendTransactionEmail,
   sendWelcomeEmail,
+  sendResetPasswordEmail,
 };

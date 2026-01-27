@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import { FiArrowLeft, FiSearch, FiSend, FiUser, FiDollarSign } from 'react-icons/fi';
 import toast from 'react-hot-toast';
@@ -15,27 +14,12 @@ const SendMoney = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
-
-  const { user } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
 
   const quickAmounts = [100, 500, 1000, 2000, 5000];
 
   useEffect(() => {
     fetchWalletBalance();
-    
-    // Check if recipient is pre-filled from QR scan
-    if (location.state?.recipientData) {
-      const recipientData = location.state.recipientData;
-      // Create user object from QR data
-      setSelectedUser({
-        _id: recipientData.userId,
-        name: recipientData.name || 'User',
-        email: recipientData.email || ''
-      });
-      setStep(2); // Skip to amount step
-    }
   }, []);
 
   useEffect(() => {
@@ -47,26 +31,7 @@ const SendMoney = () => {
     } else {
       setSearchResults([]);
     }
-  }, [searchQuery]);
-
-  // Handle QR code pre-fill
-  useEffect(() => {
-    if (location.state?.recipientData && !selectedUser) {
-      const recipientData = location.state.recipientData;
-      // If email is provided, search for user
-      if (recipientData.email) {
-        setSearchQuery(recipientData.email);
-      } else if (recipientData.userId) {
-        // Create a user object from QR data
-        setSelectedUser({
-          _id: recipientData.userId,
-          name: recipientData.name || 'User',
-          email: recipientData.email || ''
-        });
-        setStep(2);
-      }
-    }
-  }, [location.state]);
+  }, [searchQuery, searchUsers]);
 
   const fetchWalletBalance = async () => {
     try {

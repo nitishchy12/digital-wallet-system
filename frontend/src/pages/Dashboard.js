@@ -15,7 +15,7 @@ import {
 import toast from 'react-hot-toast';
 
 const Dashboard = () => {
-  const { user, updateUser } = useAuth();
+  const { user } = useAuth();
   const [walletData, setWalletData] = useState({
     balance: 0,
     formattedBalance: '₹0'

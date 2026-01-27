@@ -17,7 +17,6 @@ const VerifyOTP = () => {
   const location = useLocation();
   
   const email = location.state?.email || '';
-  const name = location.state?.name || '';
 
   useEffect(() => {
     if (isAuthenticated && !loading) {

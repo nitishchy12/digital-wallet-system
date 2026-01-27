@@ -1,6 +1,10 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
+const JWT_SECRET =
+  process.env.JWT_SECRET ||
+  "dev_jwt_secret_change_me_to_strong_random_string_at_least_32_chars";
+
 const authenticateToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -16,7 +20,7 @@ const authenticateToken = async (req, res, next) => {
     const token = authHeader.split(" ")[1];
 
     // ✅ Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
 
     // ✅ decoded.userId (NOT decoded.id)
     const user = await User.findById(decoded.userId);
