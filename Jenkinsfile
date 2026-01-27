@@ -17,14 +17,19 @@ pipeline {
             }
         }
 
+        stage("Check Docker") {
+            steps {
+                sh "docker --version"
+                sh "docker compose version || docker-compose --version"
+            }
+        }
+
         stage("Docker Build") {
             steps {
-                script {
-                    sh """
-                    docker build -t ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${DOCKER_TAG} backend
-                    docker build -t ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${DOCKER_TAG} frontend
-                    """
-                }
+                sh """
+                docker build -t ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${DOCKER_TAG} backend
+                docker build -t ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${DOCKER_TAG} frontend
+                """
             }
         }
 
@@ -37,42 +42,38 @@ pipeline {
                         passwordVariable: 'DOCKER_PASS'
                     )
                 ]) {
-                    sh "docker login -u $DOCKER_USER -p $DOCKER_PASS"
+                    sh """
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                    """
                 }
             }
         }
 
         stage("Push Images to Docker Hub") {
             steps {
-                script {
-                    sh """
-                    docker push ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${DOCKER_TAG}
-                    docker push ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${DOCKER_TAG}
-                    """
-                }
+                sh """
+                docker push ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${DOCKER_TAG}
+                docker push ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${DOCKER_TAG}
+                """
             }
         }
 
         stage("Deploy using Docker Compose") {
             steps {
-                script {
-                    sh """
-                    docker compose down
-                    docker compose pull
-                    docker compose up -d
-                    """
-                }
+                sh """
+                docker compose down || docker-compose down
+                docker compose pull || docker-compose pull
+                docker compose up -d || docker-compose up -d
+                """
             }
         }
 
         stage("Health Check") {
             steps {
-                script {
-                    sh """
-                    sleep 15
-                    curl -f http://localhost:5000/api/health
-                    """
-                }
+                sh """
+                sleep 20
+                curl --retry 5 --retry-delay 5 --fail http://localhost:5000/api/health
+                """
             }
         }
     }
