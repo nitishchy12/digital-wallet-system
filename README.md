@@ -7,6 +7,7 @@ A full-stack digital wallet project with authentication, OTP verification, walle
 - Frontend and backend both build and run.
 - Payment supports **real Razorpay flow** (order create + signature verify + wallet update in transaction) and mock mode for local testing.
 - Backend is hardened with stricter validation, structured logging, global error handling, and atomic wallet operations.
+- CI/CD workflow is configured via GitHub Actions to run backend tests, build Docker images, and push to Docker Hub on `main` branch pushes.
 - Frontend route flow follows:
   - `/signup`
   - `/signin`
@@ -182,6 +183,9 @@ Frontend runs on `http://localhost:3000`.
 - `GET /api/admin/users`
 - `GET /api/admin/transactions`
 
+### Health
+- `GET /api/health`
+
 ## Postman Guide (Quick E2E)
 
 Use this order to test complete flow quickly:
@@ -311,11 +315,31 @@ Notes:
 - `docker-compose.yml` uses conditional `depends_on` for startup ordering.
 - Backend Docker image is optimized with multi-stage build and runs as non-root user.
 
+## CI/CD Setup
+
+GitHub Actions workflow file:
+- `.github/workflows/ci-cd.yml`
+
+Pipeline trigger:
+- `push` to `main`
+
+Pipeline actions:
+- Checkout repository
+- Setup Node.js 18
+- Install backend dependencies
+- Run backend tests
+- Build backend and frontend Docker images
+- Login to Docker Hub
+- Push Docker images
+
+Required GitHub Secrets:
+- `DOCKER_USERNAME`
+- `DOCKER_PASSWORD`
+
 ## Production Checklist (Before DevOps)
 
-- Add Razorpay webhook verification for reconciliation and dispute-safe settlement.
-- Add more API and integration tests (auth, wallet, payment verify).
-- Add refresh-token storage hardening (hash refresh token in DB).
+- Add frontend test coverage (component/integration tests).
+- Add backend integration tests (DB-backed tests for transfer and webhook race conditions).
 - Add alerting/monitoring sinks for logs (ELK, CloudWatch, or Grafana stack).
 
 ## Test Scenarios
