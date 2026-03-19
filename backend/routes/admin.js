@@ -1,34 +1,36 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { validatePagination } = require('../middleware/validation');
 
-// All admin routes require authentication and admin role
 router.use(authenticateToken, requireAdmin);
 
-// Get dashboard stats
-router.get('/dashboard', async (req, res) => {
+router.get('/dashboard', async (req, res, next) => {
   try {
-    const totalUsers = await User.countDocuments();
-    const verifiedUsers = await User.countDocuments({ isVerified: true });
-    const totalTransactions = await Transaction.countDocuments();
-    const successfulTransactions = await Transaction.countDocuments({ status: 'SUCCESS' });
-    
-    // Get total money in system
-    const totalWalletBalance = await User.aggregate([
-      { $group: { _id: null, total: { $sum: '$walletBalance' } } }
+    const [
+      totalUsers,
+      verifiedUsers,
+      totalTransactions,
+      successfulTransactions,
+      totalWalletBalance,
+      recentTransactions
+    ] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ isVerified: true }),
+      Transaction.countDocuments(),
+      Transaction.countDocuments({ status: 'SUCCESS' }),
+      Wallet.aggregate([{ $group: { _id: null, total: { $sum: '$balance' } } }]),
+      Transaction.find()
+        .populate('senderId', 'name email')
+        .populate('receiverId', 'name email')
+        .sort({ createdAt: -1 })
+        .limit(10)
     ]);
 
-    // Get recent transactions
-    const recentTransactions = await Transaction.find()
-      .populate('senderId', 'name email')
-      .populate('receiverId', 'name email')
-      .sort({ createdAt: -1 })
-      .limit(10);
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: {
         stats: {
@@ -41,33 +43,29 @@ router.get('/dashboard', async (req, res) => {
         recentTransactions
       }
     });
-
   } catch (error) {
-    console.error('Admin dashboard error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch dashboard data'
-    });
+    return next(error);
   }
 });
 
-// Get all users
-router.get('/users', validatePagination, async (req, res) => {
+router.get('/users', validatePagination, async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    const users = await User.find()
-      .select('-password -refreshToken -verificationOTP')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    const [users, totalUsers] = await Promise.all([
+      User.find()
+        .select('-password -refreshToken -verificationOTP')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      User.countDocuments()
+    ]);
 
-    const totalUsers = await User.countDocuments();
     const totalPages = Math.ceil(totalUsers / limit);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: {
         users,
@@ -80,34 +78,30 @@ router.get('/users', validatePagination, async (req, res) => {
         }
       }
     });
-
   } catch (error) {
-    console.error('Get users error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch users'
-    });
+    return next(error);
   }
 });
 
-// Get all transactions
-router.get('/transactions', validatePagination, async (req, res) => {
+router.get('/transactions', validatePagination, async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    const transactions = await Transaction.find()
-      .populate('senderId', 'name email')
-      .populate('receiverId', 'name email')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    const [transactions, totalTransactions] = await Promise.all([
+      Transaction.find()
+        .populate('senderId', 'name email')
+        .populate('receiverId', 'name email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Transaction.countDocuments()
+    ]);
 
-    const totalTransactions = await Transaction.countDocuments();
     const totalPages = Math.ceil(totalTransactions / limit);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: {
         transactions,
@@ -120,13 +114,8 @@ router.get('/transactions', validatePagination, async (req, res) => {
         }
       }
     });
-
   } catch (error) {
-    console.error('Get transactions error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch transactions'
-    });
+    return next(error);
   }
 });
 

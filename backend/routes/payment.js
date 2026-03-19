@@ -6,17 +6,15 @@ const {
   handleWebhook,
   getPaymentMethods
 } = require('../controllers/paymentController');
-const { validateAddMoney } = require('../middleware/validation');
+const { validateAddMoney, validatePaymentVerify } = require('../middleware/validation');
 const { authenticateToken, requireVerified } = require('../middleware/auth');
 
-// Public routes
 router.post('/webhook', handleWebhook);
 
-// Protected routes
 router.use(authenticateToken, requireVerified);
 
 router.get('/methods', getPaymentMethods);
 router.post('/create-order', validateAddMoney, createPaymentOrder);
-router.post('/verify', verifyPayment);
+router.post('/verify', validatePaymentVerify, verifyPayment);
 
 module.exports = router;

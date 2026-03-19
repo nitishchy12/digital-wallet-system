@@ -1,23 +1,34 @@
 const { body, param, query, validationResult } = require('express-validator');
 
-// Handle validation errors
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array().map(error => ({
-        field: error.path,
-        message: error.msg,
-        value: error.value
-      }))
-    });
+
+  if (errors.isEmpty()) {
+    return next();
   }
-  next();
+
+  return res.status(400).json({
+    success: false,
+    message: 'Invalid input',
+    errors: errors.array().map((error) => ({
+      field: error.path,
+      message: error.msg,
+      value: error.value
+    }))
+  });
 };
 
-// User registration validation
+const passwordRule = body('password')
+  .isLength({ min: 8 })
+  .withMessage('Password must be at least 8 characters long')
+  .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$/)
+  .withMessage('Password must include uppercase, lowercase, number and special character');
+
+const idempotencyKeyRule = body('idempotencyKey')
+  .optional()
+  .isLength({ min: 8, max: 128 })
+  .withMessage('idempotencyKey must be between 8 and 128 characters');
+
 const validateRegistration = [
   body('name')
     .trim()
@@ -25,85 +36,81 @@ const validateRegistration = [
     .withMessage('Name must be between 2 and 50 characters')
     .matches(/^[a-zA-Z\s]+$/)
     .withMessage('Name can only contain letters and spaces'),
-  
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Please provide a valid email address'),
-  
+
+  body('email').isEmail().normalizeEmail().withMessage('Please provide a valid email address'),
+
   body('phone')
     .matches(/^[6-9]\d{9}$/)
     .withMessage('Please provide a valid 10-digit Indian phone number'),
-  
-  body('password')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters long')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
-  
+
+  passwordRule,
   handleValidationErrors
 ];
 
-// User login validation
 const validateLogin = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Please provide a valid email address'),
-  
-  body('password')
-    .notEmpty()
-    .withMessage('Password is required'),
-  
+  body('email').isEmail().normalizeEmail().withMessage('Please provide a valid email address'),
+  body('password').notEmpty().withMessage('Password is required'),
   handleValidationErrors
 ];
 
-// Money transfer validation
 const validateTransfer = [
   body('receiverEmail')
     .isEmail()
     .normalizeEmail()
     .withMessage('Please provide a valid receiver email address'),
-  
+
   body('amount')
-    .isFloat({ min: 1, max: 100000 })
-    .withMessage('Amount must be between ₹1 and ₹1,00,000'),
-  
+    .isFloat({ gt: 0, max: 100000 })
+    .withMessage('Amount must be greater than 0 and up to 1,00,000'),
+
   body('description')
     .optional()
     .trim()
     .isLength({ max: 200 })
     .withMessage('Description cannot exceed 200 characters'),
-  
+
+  idempotencyKeyRule,
   handleValidationErrors
 ];
 
-// Add money validation (FIXED FOR MOCK)
 const validateAddMoney = [
   body('amount')
-    .isFloat({ min: 1, max: 100000 })
-    .withMessage('Amount must be between ₹1 and ₹1,00,000'),
-  
+    .isFloat({ gt: 0, max: 100000 })
+    .withMessage('Amount must be greater than 0 and up to 1,00,000'),
+
   body('paymentGateway')
-    .optional() // <-- IMPORTANT
+    .optional()
     .isIn(['MOCK', 'RAZORPAY', 'STRIPE'])
     .withMessage('Invalid payment gateway'),
-  
+
+  idempotencyKeyRule,
   handleValidationErrors
 ];
 
-
-// OTP validation
-const validateOTP = [
-  body('otp')
-    .isLength({ min: 6, max: 6 })
-    .isNumeric()
-    .withMessage('OTP must be a 6-digit number'),
-  
+const validatePaymentVerify = [
+  body('transactionId').isMongoId().withMessage('transactionId must be a valid id'),
+  body('razorpay_order_id').notEmpty().withMessage('razorpay_order_id is required'),
+  body('razorpay_payment_id').notEmpty().withMessage('razorpay_payment_id is required'),
+  body('razorpay_signature').notEmpty().withMessage('razorpay_signature is required'),
   handleValidationErrors
 ];
 
-// Profile update validation
+const validateVerifyOTP = [
+  body('email').isEmail().normalizeEmail().withMessage('Please provide a valid email address'),
+  body('otp').isLength({ min: 6, max: 6 }).isNumeric().withMessage('OTP must be a 6-digit number'),
+  handleValidationErrors
+];
+
+const validateResendOTP = [
+  body('email').isEmail().normalizeEmail().withMessage('Please provide a valid email address'),
+  handleValidationErrors
+];
+
+const validateRefreshToken = [
+  body('refreshToken').notEmpty().withMessage('Refresh token is required'),
+  handleValidationErrors
+];
+
 const validateProfileUpdate = [
   body('name')
     .optional()
@@ -112,84 +119,58 @@ const validateProfileUpdate = [
     .withMessage('Name must be between 2 and 50 characters')
     .matches(/^[a-zA-Z\s]+$/)
     .withMessage('Name can only contain letters and spaces'),
-  
+
   body('phone')
     .optional()
     .matches(/^[6-9]\d{9}$/)
     .withMessage('Please provide a valid 10-digit Indian phone number'),
-  
+
   handleValidationErrors
 ];
 
-// Password change validation
 const validatePasswordChange = [
-  body('currentPassword')
-    .notEmpty()
-    .withMessage('Current password is required'),
-  
+  body('currentPassword').notEmpty().withMessage('Current password is required'),
+
   body('newPassword')
-    .isLength({ min: 6 })
-    .withMessage('New password must be at least 6 characters long')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('New password must contain at least one uppercase letter, one lowercase letter, and one number'),
-  
-  body('confirmPassword')
-    .custom((value, { req }) => {
-      if (value !== req.body.newPassword) {
-        throw new Error('Password confirmation does not match new password');
-      }
-      return true;
-    }),
-  
+    .isLength({ min: 8 })
+    .withMessage('New password must be at least 8 characters long')
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$/)
+    .withMessage('New password must include uppercase, lowercase, number and special character'),
+
+  body('confirmPassword').custom((value, { req }) => {
+    if (value !== req.body.newPassword) {
+      throw new Error('Password confirmation does not match new password');
+    }
+
+    return true;
+  }),
+
   handleValidationErrors
 ];
 
-// Forgot password validation
 const validateForgotPassword = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Please provide a valid email address'),
-
+  body('email').isEmail().normalizeEmail().withMessage('Please provide a valid email address'),
   handleValidationErrors
 ];
 
-// Reset password validation
-const validateResetPassword = [
-  body('token')
-    .notEmpty()
-    .withMessage('Reset token is required'),
+const validateResetPassword = [body('token').notEmpty().withMessage('Reset token is required'), passwordRule, handleValidationErrors];
 
-  body('password')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters long')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
-
-  handleValidationErrors
-];
-
-// Pagination validation
 const validatePagination = [
-  query('page')
-    .optional()
-    .isInt({ min: 1 })
-    .withMessage('Page must be a positive integer'),
-  
-  query('limit')
-    .optional()
-    .isInt({ min: 1, max: 100 })
-    .withMessage('Limit must be between 1 and 100'),
-  
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
   handleValidationErrors
 ];
 
-// MongoDB ObjectId validation
+const validateDateRangeFilters = [
+  query('startDate').optional().isISO8601().withMessage('startDate must be a valid ISO date'),
+  query('endDate').optional().isISO8601().withMessage('endDate must be a valid ISO date'),
+  query('minAmount').optional().isFloat({ gt: 0 }).withMessage('minAmount must be greater than 0'),
+  query('maxAmount').optional().isFloat({ gt: 0 }).withMessage('maxAmount must be greater than 0'),
+  handleValidationErrors
+];
+
 const validateObjectId = (paramName) => [
-  param(paramName)
-    .isMongoId()
-    .withMessage(`Invalid ${paramName} format`),
-  
+  param(paramName).isMongoId().withMessage(`Invalid ${paramName} format`),
   handleValidationErrors
 ];
 
@@ -198,10 +179,14 @@ module.exports = {
   validateLogin,
   validateTransfer,
   validateAddMoney,
-  validateOTP,
+  validatePaymentVerify,
+  validateVerifyOTP,
+  validateResendOTP,
+  validateRefreshToken,
   validateProfileUpdate,
   validatePasswordChange,
   validatePagination,
+  validateDateRangeFilters,
   validateObjectId,
   validateForgotPassword,
   validateResetPassword,

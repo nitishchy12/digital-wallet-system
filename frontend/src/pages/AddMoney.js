@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import { FiCreditCard, FiDollarSign, FiArrowLeft } from 'react-icons/fi';
 import toast from 'react-hot-toast';
+import { generateIdempotencyKey } from '../utils/idempotency';
 
 const AddMoney = () => {
   const [amount, setAmount] = useState('');
@@ -10,7 +11,7 @@ const AddMoney = () => {
   const [selectedMethod, setSelectedMethod] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMethods, setLoadingMethods] = useState(true);
-  
+
   const navigate = useNavigate();
 
   const quickAmounts = [100, 500, 1000, 2000, 5000, 10000];
@@ -22,9 +23,10 @@ const AddMoney = () => {
   const fetchPaymentMethods = async () => {
     try {
       const response = await api.get('/payment/methods');
-      setPaymentMethods(response.data.data.paymentMethods);
-      if (response.data.data.paymentMethods.length > 0) {
-        setSelectedMethod(response.data.data.paymentMethods[0].id);
+      const enabledMethods = (response.data.data.paymentMethods || []).filter((method) => method.enabled);
+      setPaymentMethods(enabledMethods);
+      if (enabledMethods.length > 0) {
+        setSelectedMethod(enabledMethods[0].id);
       }
     } catch (error) {
       console.error('Failed to fetch payment methods:', error);
@@ -43,17 +45,31 @@ const AddMoney = () => {
     setAmount(quickAmount.toString());
   };
 
+  const loadRazorpayScript = () =>
+    new Promise((resolve, reject) => {
+      if (window.Razorpay) {
+        resolve();
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load Razorpay SDK'));
+      document.body.appendChild(script);
+    });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    const amountNum = parseInt(amount);
+
+    const amountNum = Number(amount);
     if (!amountNum || amountNum < 1) {
       toast.error('Please enter a valid amount');
       return;
     }
 
     if (amountNum > 100000) {
-      toast.error('Maximum amount is ₹1,00,000');
+      toast.error('Maximum amount is Rs 1,00,000');
       return;
     }
 
@@ -64,12 +80,22 @@ const AddMoney = () => {
 
     setIsLoading(true);
 
+    const idempotencyKey = generateIdempotencyKey('add-money');
+
     try {
-      // Create payment order
-      const orderResponse = await api.post('/payment/create-order', {
-        amount: amountNum,
-        paymentGateway: selectedMethod.toUpperCase()
-      });
+      const orderResponse = await api.post(
+        '/payment/create-order',
+        {
+          amount: amountNum,
+          paymentGateway: selectedMethod.toUpperCase(),
+          idempotencyKey
+        },
+        {
+          headers: {
+            'x-idempotency-key': idempotencyKey
+          }
+        }
+      );
 
       const { transaction, paymentData } = orderResponse.data.data;
 
@@ -80,56 +106,47 @@ const AddMoney = () => {
       }
 
       if (selectedMethod === 'razorpay') {
-        // Load Razorpay script
-        const script = document.createElement('script');
-        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-        script.onload = () => {
-          const options = {
-            key: paymentData.key,
-            amount: paymentData.amount,
-            currency: paymentData.currency,
-            order_id: paymentData.orderId,
-            name: 'Digital Wallet',
-            description: 'Add money to wallet',
-            handler: async (response) => {
-              try {
-                // Verify payment
-                await api.post('/payment/verify', {
-                  razorpay_order_id: response.razorpay_order_id,
-                  razorpay_payment_id: response.razorpay_payment_id,
-                  razorpay_signature: response.razorpay_signature,
-                  transactionId: transaction._id
-                });
+        await loadRazorpayScript();
 
-                toast.success('Money added successfully!');
-                navigate('/dashboard');
-              } catch (error) {
-                console.error('Payment verification failed:', error);
-                toast.error('Payment verification failed');
-              }
-            },
-            modal: {
-              ondismiss: () => {
-                setIsLoading(false);
-                toast.error('Payment cancelled');
-              }
-            },
-            theme: {
-              color: '#0ea5e9'
+        const options = {
+          key: paymentData.key,
+          amount: paymentData.amount,
+          currency: paymentData.currency,
+          order_id: paymentData.orderId,
+          name: paymentData.name || 'Digital Wallet',
+          description: paymentData.description || 'Add money to wallet',
+          prefill: paymentData.prefill,
+          handler: async (response) => {
+            try {
+              await api.post('/payment/verify', {
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                transactionId: transaction._id
+              });
+
+              toast.success('Money added successfully!');
+              navigate('/dashboard');
+            } catch (error) {
+              console.error('Payment verification failed:', error);
+              toast.error(error.response?.data?.message || 'Payment verification failed');
+            } finally {
+              setIsLoading(false);
             }
-          };
+          },
+          modal: {
+            ondismiss: () => {
+              setIsLoading(false);
+              toast.error('Payment cancelled');
+            }
+          },
+          theme: {
+            color: '#0ea5e9'
+          }
+        };
 
-          const razorpay = new window.Razorpay(options);
-          razorpay.open();
-          setIsLoading(false);
-        };
-        
-        script.onerror = () => {
-          setIsLoading(false);
-          toast.error('Failed to load payment gateway');
-        };
-        
-        document.body.appendChild(script);
+        const razorpay = new window.Razorpay(options);
+        razorpay.open();
         return;
       }
 
@@ -137,7 +154,7 @@ const AddMoney = () => {
       setIsLoading(false);
     } catch (error) {
       console.error('Payment initiation failed:', error);
-      toast.error('Failed to initiate payment');
+      toast.error(error.response?.data?.message || 'Failed to initiate payment');
       setIsLoading(false);
     }
   };
@@ -166,11 +183,8 @@ const AddMoney = () => {
 
       <div className="card">
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Amount Input */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Enter Amount
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Enter Amount</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <FiDollarSign className="h-5 w-5 text-gray-400" />
@@ -185,17 +199,12 @@ const AddMoney = () => {
               />
             </div>
             {amount && (
-              <p className="mt-2 text-sm text-gray-600">
-                Amount: ₹{parseInt(amount).toLocaleString('en-IN')}
-              </p>
+              <p className="mt-2 text-sm text-gray-600">Amount: Rs {parseInt(amount, 10).toLocaleString('en-IN')}</p>
             )}
           </div>
 
-          {/* Quick Amount Buttons */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Quick Select
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Quick Select</label>
             <div className="grid grid-cols-3 gap-3">
               {quickAmounts.map((quickAmount) => (
                 <button
@@ -208,22 +217,19 @@ const AddMoney = () => {
                       : 'border-gray-300 hover:border-gray-400 text-gray-700'
                   }`}
                 >
-                  ₹{quickAmount.toLocaleString('en-IN')}
+                  Rs {quickAmount.toLocaleString('en-IN')}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Payment Methods */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Payment Method
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Payment Method</label>
             {paymentMethods.length === 0 ? (
               <div className="text-center py-8">
                 <FiCreditCard className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-500">No payment methods available</p>
-                <p className="text-sm text-gray-400">Please contact support</p>
+                <p className="text-sm text-gray-400">Please configure payment gateway keys</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -251,42 +257,12 @@ const AddMoney = () => {
                         <p className="text-sm text-gray-500">{method.description}</p>
                       </div>
                     </div>
-                    <div className={`w-4 h-4 rounded-full border-2 ${
-                      selectedMethod === method.id
-                        ? 'border-primary-500 bg-primary-500'
-                        : 'border-gray-300'
-                    }`}>
-                      {selectedMethod === method.id && (
-                        <div className="w-2 h-2 bg-white rounded-full mx-auto mt-0.5"></div>
-                      )}
-                    </div>
                   </label>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Security Notice */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <FiCreditCard className="h-5 w-5 text-blue-400" />
-              </div>
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-blue-800">
-                  Secure Payment
-                </h3>
-                <div className="mt-2 text-sm text-blue-700">
-                  <p>
-                    Your payment is processed securely through our trusted payment partners.
-                    We never store your card details.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Submit Button */}
           <button
             type="submit"
             disabled={isLoading || !amount || !selectedMethod || paymentMethods.length === 0}
@@ -298,7 +274,7 @@ const AddMoney = () => {
                 Processing...
               </div>
             ) : (
-              `Add ₹${amount ? parseInt(amount).toLocaleString('en-IN') : '0'}`
+              `Add Rs ${amount ? parseInt(amount, 10).toLocaleString('en-IN') : '0'}`
             )}
           </button>
         </form>

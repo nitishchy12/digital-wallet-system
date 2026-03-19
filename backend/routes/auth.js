@@ -5,23 +5,23 @@ const authController = require('../controllers/authController');
 const {
   validateRegistration,
   validateLogin,
-  validateOTP,
+  validateVerifyOTP,
+  validateResendOTP,
   validateForgotPassword,
-  validateResetPassword
+  validateResetPassword,
+  validateRefreshToken
 } = require('../middleware/validation');
 
 const { authenticateToken } = require('../middleware/auth');
 
-// Public routes
 router.post('/register', validateRegistration, authController.register);
-router.post('/verify-otp', validateOTP, authController.verifyOTP);
-router.post('/resend-otp', authController.resendOTP);
+router.post('/verify-otp', validateVerifyOTP, authController.verifyOTP);
+router.post('/resend-otp', validateResendOTP, authController.resendOTP);
 router.post('/login', validateLogin, authController.login);
-router.post('/refresh-token', authController.refreshToken);
+router.post('/refresh-token', validateRefreshToken, authController.refreshToken);
 router.post('/forgot-password', validateForgotPassword, authController.forgotPassword);
 router.post('/reset-password', validateResetPassword, authController.resetPassword);
 
-// Protected routes
 router.post('/logout', authenticateToken, authController.logout);
 
 module.exports = router;

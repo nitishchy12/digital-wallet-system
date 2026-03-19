@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
 import { FiArrowLeft, FiSearch, FiSend, FiUser, FiDollarSign } from 'react-icons/fi';
 import toast from 'react-hot-toast';
+import { generateIdempotencyKey } from '../utils/idempotency';
 
 const SendMoney = () => {
   const [step, setStep] = useState(1); // 1: Select recipient, 2: Enter amount, 3: Confirm
@@ -109,11 +110,21 @@ const SendMoney = () => {
     setIsLoading(true);
 
     try {
-      const response = await api.post('/wallet/transfer', {
-        receiverEmail: selectedUser.email,
-        amount: amountNum,
-        description: description.trim() || undefined
-      });
+      const idempotencyKey = generateIdempotencyKey('transfer');
+      const response = await api.post(
+        '/wallet/transfer',
+        {
+          receiverEmail: selectedUser.email,
+          amount: amountNum,
+          description: description.trim() || undefined,
+          idempotencyKey
+        },
+        {
+          headers: {
+            'x-idempotency-key': idempotencyKey
+          }
+        }
+      );
 
       toast.success(response.data.message);
       navigate('/dashboard');

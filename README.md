@@ -5,13 +5,24 @@ A full-stack digital wallet project with authentication, OTP verification, walle
 ## Current Project Status
 
 - Frontend and backend both build and run.
-- Payment flow is currently **mocked** (no live Razorpay/Stripe charge in this code path).
+- Payment supports **real Razorpay flow** (order create + signature verify + wallet update in transaction) and mock mode for local testing.
+- Backend is hardened with stricter validation, structured logging, global error handling, and atomic wallet operations.
 - Frontend route flow follows:
   - `/signup`
   - `/signin`
   - `/dashboard`
   - `/send`
 - Legacy frontend routes are redirected for compatibility (`/login`, `/register`, `/send-money`).
+
+## Key Design Decisions
+
+- Used JWT access + refresh token flow for stateless authentication with token rotation.
+- Used MongoDB sessions/transactions for balance transfer and add-money consistency.
+- Separated `User`, `Wallet`, and `Transaction` models for clear domain boundaries.
+- Added strong input validation via `express-validator` on auth/payment/wallet APIs.
+- Added request logging with Morgan and structured logs with Winston.
+- Added indexes for scale on `email`, `createdAt`, `senderId`, and `receiverId` query paths.
+- Added request idempotency keys for add-money and transfer APIs to prevent duplicate processing.
 
 ## Tech Stack
 
@@ -29,6 +40,7 @@ A full-stack digital wallet project with authentication, OTP verification, walle
 - JWT auth
 - Express Validator
 - Socket.io
+- Winston + Morgan
 - Nodemailer
 
 ## Project Structure
@@ -40,6 +52,7 @@ PatymProject/
     middleware/
     models/
     routes/
+    tests/
     utils/
     server.js
   frontend/
@@ -71,6 +84,13 @@ MONGODB_URI=mongodb://localhost:27017/digital-wallet
 JWT_SECRET=your_jwt_secret
 JWT_REFRESH_SECRET=your_refresh_secret
 FRONTEND_URL=http://localhost:3000
+```
+
+For real Razorpay flow, also set:
+
+```env
+RAZORPAY_KEY_ID=your_razorpay_key_id
+RAZORPAY_KEY_SECRET=your_razorpay_key_secret
 ```
 
 Start backend:
@@ -115,7 +135,7 @@ Frontend runs on `http://localhost:3000`.
 
 ### Protected
 - `/dashboard` - Wallet overview + recent transactions
-- `/add-money` - Add money (mock)
+- `/add-money` - Add money (Razorpay or mock)
 - `/send` - Send money to users
 - `/transactions` - Transaction list
 - `/profile` - User profile
@@ -137,11 +157,12 @@ Frontend runs on `http://localhost:3000`.
 ### Wallet
 - `GET /api/wallet/balance`
 - `GET /api/wallet/stats`
+- `GET /api/wallet/analytics`
 - `GET /api/wallet/transactions`
 - `GET /api/wallet/search-users`
 - `POST /api/wallet/transfer`
 
-### Payment (Mock mode)
+### Payment
 - `GET /api/payment/methods`
 - `POST /api/payment/create-order`
 - `POST /api/payment/verify`
@@ -167,7 +188,7 @@ Use this order to test complete flow quickly:
      "name": "Test User",
      "email": "testuser@example.com",
      "phone": "9876543210",
-     "password": "Password1"
+     "password": "Password@123"
    }
    ```
 
@@ -187,7 +208,7 @@ Use this order to test complete flow quickly:
    ```json
    {
      "email": "testuser@example.com",
-     "password": "Password1"
+     "password": "Password@123"
    }
    ```
    - Update `token` variable from `data.accessToken`.
@@ -196,28 +217,35 @@ Use this order to test complete flow quickly:
    - `Authorization: Bearer {{token}}`
 
 5. `GET /api/wallet/balance`
-6. `POST /api/payment/create-order` (mock add money)
+6. `POST /api/payment/create-order` (Razorpay or mock)
    - Body:
    ```json
    {
      "amount": 5000,
-     "paymentGateway": "MOCK"
+     "paymentGateway": "RAZORPAY",
+     "idempotencyKey": "add-money-unique-key-1"
    }
    ```
+   - Header: `x-idempotency-key: add-money-unique-key-1`
 
-7. Create second user similarly, then transfer:
+7. For Razorpay: complete checkout on frontend and call `POST /api/payment/verify`.
+
+8. Create second user similarly, then transfer:
    - `POST /api/wallet/transfer`
    - Body:
    ```json
    {
      "receiverEmail": "seconduser@example.com",
      "amount": 500,
-     "description": "test transfer"
+     "description": "test transfer",
+     "idempotencyKey": "transfer-unique-key-1"
    }
    ```
+   - Header: `x-idempotency-key: transfer-unique-key-1`
 
-8. `GET /api/wallet/transactions`
-9. `GET /api/wallet/stats`
+9. `GET /api/wallet/transactions`
+10. `GET /api/wallet/stats`
+11. `GET /api/wallet/analytics`
 
 Suggested Postman variables:
 - `baseUrl = http://localhost:5000`
@@ -235,8 +263,9 @@ Suggested Postman variables:
 - `npm run build` - production build
 - `npm test` - test runner
 
-## Notes
+## Production Checklist (Before DevOps)
 
-- If your backend `.env` still has `mongo:27017` from Docker setup, server has a fallback to localhost in current code.
-- Keep strong JWT secrets for production.
-- Replace mock payment flow with real gateway logic before production use.
+- Add Razorpay webhook verification for reconciliation and dispute-safe settlement.
+- Add more API and integration tests (auth, wallet, payment verify).
+- Add refresh-token storage hardening (hash refresh token in DB).
+- Add alerting/monitoring sinks for logs (ELK, CloudWatch, or Grafana stack).

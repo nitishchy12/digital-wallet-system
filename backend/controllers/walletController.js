@@ -1,12 +1,19 @@
-const mongoose = require("mongoose");
-const crypto = require("crypto");
-const User = require("../models/User");
-const Wallet = require("../models/Wallet");
-const Transaction = require("../models/Transaction");
+const mongoose = require('mongoose');
+const crypto = require('crypto');
+const User = require('../models/User');
+const Wallet = require('../models/Wallet');
+const Transaction = require('../models/Transaction');
+const logger = require('../utils/logger');
+const { sendTransactionEmail } = require('../utils/emailService');
 
-/* ================= GET WALLET BALANCE ================= */
+const getIdempotencyKey = (req) => {
+  const headerKey = req.headers?.['x-idempotency-key'];
+  const bodyKey = req.body?.idempotencyKey;
+  const key = (headerKey || bodyKey || '').toString().trim();
+  return key || null;
+};
 
-const getWalletBalance = async (req, res) => {
+const getWalletBalance = async (req, res, next) => {
   try {
     let wallet;
 
@@ -17,13 +24,12 @@ const getWalletBalance = async (req, res) => {
           $setOnInsert: {
             userId: req.user._id,
             balance: 0,
-            currency: "INR",
-          },
+            currency: 'INR'
+          }
         },
         { new: true, upsert: true }
       );
     } catch (error) {
-      // Handle rare race condition on unique index
       if (error.code === 11000) {
         wallet = await Wallet.findOne({ userId: req.user._id });
       } else {
@@ -31,51 +37,80 @@ const getWalletBalance = async (req, res) => {
       }
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: {
         balance: wallet.balance,
-        formattedBalance: `₹${wallet.balance.toLocaleString("en-IN")}`,
-        currency: wallet.currency,
-      },
+        formattedBalance: `Rs ${wallet.balance.toLocaleString('en-IN')}`,
+        currency: wallet.currency
+      }
     });
   } catch (error) {
-    console.error("Get wallet balance error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch wallet balance",
-    });
+    return next(error);
   }
 };
 
-/* ================= TRANSFER MONEY ================= */
-
-const transferMoney = async (req, res) => {
+const transferMoney = async (req, res, next) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const { receiverEmail, amount, description } = req.body;
+    const { receiverEmail, description } = req.body;
+    const amount = Number(req.body.amount);
     const senderId = req.user._id;
+    const idempotencyKey = getIdempotencyKey(req);
 
-    if (amount <= 0) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: "Amount must be greater than zero",
-      });
+    if (idempotencyKey) {
+      const existingTransaction = await Transaction.findOne({
+        idempotencyUserId: senderId,
+        idempotencyKey,
+        type: 'TRANSFER'
+      })
+        .populate('receiverId', 'name email')
+        .sort({ createdAt: -1 });
+
+      if (existingTransaction?.status === 'SUCCESS') {
+        const senderWallet = await Wallet.findOne({ userId: senderId }).select('balance');
+
+        return res.status(200).json({
+          success: true,
+          message: 'Transfer already processed for this request',
+          data: {
+            transaction: existingTransaction,
+            senderBalance: senderWallet?.balance || 0,
+            receiver: {
+              name: existingTransaction.receiverId?.name,
+              email: existingTransaction.receiverId?.email
+            }
+          }
+        });
+      }
+
+      if (existingTransaction?.status === 'PENDING') {
+        return res.status(409).json({
+          success: false,
+          message: 'A transfer is already in progress for this request'
+        });
+      }
     }
 
-    // ================= FIND RECEIVER =================
-    const receiver = await User.findOne({ email: receiverEmail }).session(
-      session
-    );
+    const receiver = await User.findOne({ email: receiverEmail })
+      .select('_id name email isVerified isActive')
+      .session(session);
 
     if (!receiver) {
       await session.abortTransaction();
       return res.status(404).json({
         success: false,
-        message: "Receiver not found",
+        message: 'Receiver not found'
+      });
+    }
+
+    if (!receiver.isVerified || !receiver.isActive) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Receiver account is not eligible to receive payments'
       });
     }
 
@@ -83,125 +118,181 @@ const transferMoney = async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Cannot transfer money to yourself",
+        message: 'Cannot transfer money to yourself'
       });
     }
 
-    if (!receiver.isVerified) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: "Receiver account is not verified",
-      });
-    }
-
-    // ================= GET WALLETS =================
-    const senderWallet = await Wallet.findOneAndUpdate(
+    await Wallet.updateOne(
       { userId: senderId },
       {
         $setOnInsert: {
           userId: senderId,
           balance: 0,
-          currency: "INR",
-        },
+          currency: 'INR'
+        }
       },
-      { new: true, upsert: true, session }
+      { upsert: true, session }
     );
 
-    const receiverWallet = await Wallet.findOneAndUpdate(
+    await Wallet.updateOne(
       { userId: receiver._id },
       {
         $setOnInsert: {
           userId: receiver._id,
           balance: 0,
-          currency: "INR",
-        },
+          currency: 'INR'
+        }
       },
-      { new: true, upsert: true, session }
+      { upsert: true, session }
     );
 
-    if (senderWallet.balance < amount) {
+    const senderDebitResult = await Wallet.updateOne(
+      {
+        userId: senderId,
+        balance: { $gte: amount }
+      },
+      { $inc: { balance: -amount } },
+      { session }
+    );
+
+    if (senderDebitResult.modifiedCount !== 1) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Insufficient wallet balance",
+        message: 'Insufficient wallet balance'
       });
     }
 
-    // ================= CREATE TRANSACTION =================
-    const transactionId = crypto.randomBytes(12).toString("hex");
+    await Wallet.updateOne(
+      { userId: receiver._id },
+      { $inc: { balance: amount } },
+      { session }
+    );
 
-    const transaction = new Transaction({
-      transactionId,
-      senderId,
-      receiverId: receiver._id,
-      amount,
-      type: "TRANSFER",
-      status: "PENDING",
-      description: description || `Transfer to ${receiver.name}`,
-      paymentGateway: "INTERNAL",
-    });
+    const [senderWallet, receiverWallet] = await Promise.all([
+      Wallet.findOne({ userId: senderId }).session(session),
+      Wallet.findOne({ userId: receiver._id }).session(session)
+    ]);
 
-    await transaction.save({ session });
-
-    // ================= UPDATE BALANCES =================
-    senderWallet.balance -= amount;
-    receiverWallet.balance += amount;
-
-    await senderWallet.save({ session });
-    await receiverWallet.save({ session });
-
-    // ================= MARK SUCCESS =================
-    transaction.status = "SUCCESS";
-    transaction.balanceSnapshot = {
-      senderBalance: senderWallet.balance,
-      receiverBalance: receiverWallet.balance,
-    };
-
-    await transaction.save({ session });
+    const [transaction] = await Transaction.create(
+      [
+        {
+          transactionId: crypto.randomBytes(12).toString('hex'),
+          senderId,
+          receiverId: receiver._id,
+          amount,
+          type: 'TRANSFER',
+          status: 'SUCCESS',
+          description: description || `Transfer to ${receiver.name}`,
+          paymentGateway: 'INTERNAL',
+          processedAt: new Date(),
+          idempotencyKey,
+          idempotencyUserId: senderId,
+          balanceSnapshot: {
+            senderBalance: senderWallet.balance,
+            receiverBalance: receiverWallet.balance
+          }
+        }
+      ],
+      { session }
+    );
 
     await session.commitTransaction();
 
-    res.status(200).json({
+    if (global.io) {
+      global.io.to(`user-${senderId}`).emit('transaction-update', {
+        type: 'TRANSFER_SENT',
+        transaction: transaction.toObject(),
+        newBalance: senderWallet.balance
+      });
+
+      global.io.to(`user-${receiver._id}`).emit('transaction-update', {
+        type: 'MONEY_RECEIVED',
+        transaction: transaction.toObject(),
+        newBalance: receiverWallet.balance
+      });
+    }
+
+    Promise.allSettled([
+      sendTransactionEmail(req.user.email, req.user.name, {
+        direction: 'SENT',
+        amount,
+        counterpartyName: receiver.name,
+        description: description || 'Wallet transfer',
+        balance: senderWallet.balance,
+        transactionId: transaction.transactionId
+      }),
+      sendTransactionEmail(receiver.email, receiver.name, {
+        direction: 'RECEIVED',
+        amount,
+        counterpartyName: req.user.name,
+        description: description || 'Wallet transfer',
+        balance: receiverWallet.balance,
+        transactionId: transaction.transactionId
+      })
+    ]).catch((error) => {
+      logger.warn('Transfer notification dispatch issue: %s', error.message);
+    });
+
+    return res.status(200).json({
       success: true,
-      message: `₹${amount} transferred successfully to ${receiver.name}`,
+      message: `Rs ${amount} transferred successfully to ${receiver.name}`,
       data: {
         transaction,
         senderBalance: senderWallet.balance,
         receiver: {
           name: receiver.name,
-          email: receiver.email,
-        },
-      },
+          email: receiver.email
+        }
+      }
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("Transfer money error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Money transfer failed",
-    });
+    logger.error('Transfer money error: %s', error.message);
+    return next(error);
   } finally {
     session.endSession();
   }
 };
 
-/* ================= TRANSACTION HISTORY ================= */
-
-const getTransactionHistory = async (req, res) => {
+const getTransactionHistory = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
     const match = {
-      $or: [{ senderId: userId }, { receiverId: userId }],
+      $or: [{ senderId: userId }, { receiverId: userId }]
     };
 
+    if (req.query.startDate || req.query.endDate) {
+      match.createdAt = {};
+
+      if (req.query.startDate) {
+        match.createdAt.$gte = new Date(req.query.startDate);
+      }
+
+      if (req.query.endDate) {
+        match.createdAt.$lte = new Date(req.query.endDate);
+      }
+    }
+
+    if (req.query.minAmount || req.query.maxAmount) {
+      match.amount = {};
+
+      if (req.query.minAmount) {
+        match.amount.$gte = Number(req.query.minAmount);
+      }
+
+      if (req.query.maxAmount) {
+        match.amount.$lte = Number(req.query.maxAmount);
+      }
+    }
+
     const transactions = await Transaction.find(match)
-      .populate("senderId", "name email")
-      .populate("receiverId", "name email")
+      .populate('senderId', 'name email')
+      .populate('receiverId', 'name email')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
@@ -209,18 +300,17 @@ const getTransactionHistory = async (req, res) => {
     const total = await Transaction.countDocuments(match);
 
     const formatted = transactions.map((tx) => {
-      const isReceived =
-        tx.receiverId._id.toString() === userId.toString();
+      const isReceived = tx.receiverId?._id?.toString() === userId.toString();
 
       return {
         ...tx.toObject(),
-        direction: isReceived ? "RECEIVED" : "SENT",
+        direction: isReceived ? 'RECEIVED' : 'SENT',
         counterparty: isReceived ? tx.senderId : tx.receiverId,
-        formattedAmount: `₹${tx.amount.toLocaleString("en-IN")}`,
+        formattedAmount: `Rs ${tx.amount.toLocaleString('en-IN')}`
       };
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: {
         transactions: formatted,
@@ -228,21 +318,18 @@ const getTransactionHistory = async (req, res) => {
           page,
           totalPages: Math.ceil(total / limit),
           totalTransactions: total,
-        },
-      },
+          hasNextPage: skip + transactions.length < total,
+          hasPrevPage: page > 1
+        }
+      }
     });
   } catch (error) {
-    console.error("Transaction history error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch transaction history",
-    });
+    logger.error('Transaction history error: %s', error.message);
+    return next(error);
   }
 };
 
-/* ================= WALLET STATS ================= */
-
-const getWalletStats = async (req, res) => {
+const getWalletStats = async (req, res, next) => {
   try {
     const userId = req.user._id;
 
@@ -255,13 +342,12 @@ const getWalletStats = async (req, res) => {
           $setOnInsert: {
             userId,
             balance: 0,
-            currency: "INR",
-          },
+            currency: 'INR'
+          }
         },
         { new: true, upsert: true }
       );
     } catch (error) {
-      // Handle rare race condition on unique index
       if (error.code === 11000) {
         wallet = await Wallet.findOne({ userId });
       } else {
@@ -269,37 +355,178 @@ const getWalletStats = async (req, res) => {
       }
     }
 
-    const sentAgg = await Transaction.aggregate([
-      { $match: { senderId: userId, status: "SUCCESS" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
+    const [sentAgg, receivedAgg, txCount] = await Promise.all([
+      Transaction.aggregate([
+        { $match: { senderId: userId, status: 'SUCCESS' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]),
+      Transaction.aggregate([
+        { $match: { receiverId: userId, status: 'SUCCESS' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]),
+      Transaction.countDocuments({ $or: [{ senderId: userId }, { receiverId: userId }] })
     ]);
 
-    const receivedAgg = await Transaction.aggregate([
-      { $match: { receiverId: userId, status: "SUCCESS" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]);
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: {
         balance: wallet.balance,
+        totalTransactions: txCount,
         totalSent: sentAgg[0]?.total || 0,
         totalReceived: receivedAgg[0]?.total || 0,
-        formattedBalance: `₹${wallet.balance.toLocaleString("en-IN")}`,
-      },
+        formattedBalance: `Rs ${wallet.balance.toLocaleString('en-IN')}`
+      }
     });
   } catch (error) {
-    console.error("Wallet stats error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch wallet statistics",
-    });
+    logger.error('Wallet stats error: %s', error.message);
+    return next(error);
   }
 };
 
-/* ================= SEARCH USERS ================= */
+const getAnalytics = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
 
-const searchUsers = async (req, res) => {
+    const start = new Date();
+    start.setMonth(start.getMonth() - 5);
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+
+    const [monthlySent, monthlyReceived, topReceivers, sentTotalAgg, receivedTotalAgg] = await Promise.all([
+      Transaction.aggregate([
+        {
+          $match: {
+            senderId: userId,
+            status: 'SUCCESS',
+            createdAt: { $gte: start }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' }
+            },
+            totalSent: { $sum: '$amount' }
+          }
+        },
+        { $sort: { '_id.year': 1, '_id.month': 1 } }
+      ]),
+      Transaction.aggregate([
+        {
+          $match: {
+            receiverId: userId,
+            status: 'SUCCESS',
+            createdAt: { $gte: start }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' }
+            },
+            totalReceived: { $sum: '$amount' }
+          }
+        },
+        { $sort: { '_id.year': 1, '_id.month': 1 } }
+      ]),
+      Transaction.aggregate([
+        {
+          $match: {
+            senderId: userId,
+            status: 'SUCCESS',
+            receiverId: { $exists: true }
+          }
+        },
+        {
+          $group: {
+            _id: '$receiverId',
+            totalAmount: { $sum: '$amount' },
+            txCount: { $sum: 1 }
+          }
+        },
+        { $sort: { totalAmount: -1 } },
+        { $limit: 5 },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'user'
+          }
+        },
+        { $unwind: '$user' },
+        {
+          $project: {
+            _id: 0,
+            receiverId: '$user._id',
+            name: '$user.name',
+            email: '$user.email',
+            totalAmount: 1,
+            txCount: 1
+          }
+        }
+      ]),
+      Transaction.aggregate([
+        { $match: { senderId: userId, status: 'SUCCESS' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]),
+      Transaction.aggregate([
+        { $match: { receiverId: userId, status: 'SUCCESS' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ])
+    ]);
+
+    const monthMap = new Map();
+
+    for (let i = 0; i < 6; i += 1) {
+      const d = new Date(start);
+      d.setMonth(start.getMonth() + i);
+      const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
+      monthMap.set(key, {
+        month: d.toLocaleDateString('en-IN', { month: 'short' }),
+        year: d.getFullYear(),
+        sent: 0,
+        received: 0
+      });
+    }
+
+    monthlySent.forEach((row) => {
+      const key = `${row._id.year}-${row._id.month}`;
+      if (monthMap.has(key)) {
+        monthMap.get(key).sent = row.totalSent;
+      }
+    });
+
+    monthlyReceived.forEach((row) => {
+      const key = `${row._id.year}-${row._id.month}`;
+      if (monthMap.has(key)) {
+        monthMap.get(key).received = row.totalReceived;
+      }
+    });
+
+    const sentTotal = sentTotalAgg[0]?.total || 0;
+    const receivedTotal = receivedTotalAgg[0]?.total || 0;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        monthly: Array.from(monthMap.values()),
+        sentVsReceived: {
+          sent: sentTotal,
+          received: receivedTotal
+        },
+        topReceivers
+      }
+    });
+  } catch (error) {
+    logger.error('Wallet analytics error: %s', error.message);
+    return next(error);
+  }
+};
+
+const searchUsers = async (req, res, next) => {
   try {
     const { query } = req.query;
     const currentUserId = req.user._id;
@@ -307,7 +534,7 @@ const searchUsers = async (req, res) => {
     if (!query || query.length < 2) {
       return res.status(400).json({
         success: false,
-        message: "Search query must be at least 2 characters",
+        message: 'Search query must be at least 2 characters'
       });
     }
 
@@ -316,32 +543,29 @@ const searchUsers = async (req, res) => {
       isVerified: true,
       isActive: true,
       $or: [
-        { name: { $regex: query, $options: "i" } },
-        { email: { $regex: query, $options: "i" } },
-      ],
+        { name: { $regex: query, $options: 'i' } },
+        { email: { $regex: query, $options: 'i' } }
+      ]
     })
-      .select("name email")
-      .limit(10);
+      .select('name email')
+      .limit(10)
+      .lean();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      data: { users },
+      data: { users }
     });
   } catch (error) {
-    console.error("Search users error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to search users",
-    });
+    logger.error('Search users error: %s', error.message);
+    return next(error);
   }
 };
-
-/* ================= EXPORTS ================= */
 
 module.exports = {
   getWalletBalance,
   transferMoney,
   getTransactionHistory,
   getWalletStats,
-  searchUsers,
+  getAnalytics,
+  searchUsers
 };
