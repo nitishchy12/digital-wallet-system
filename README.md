@@ -273,6 +273,41 @@ Current backend test suites:
 - `npm run build` - production build
 - `npm test` - test runner
 
+## Docker Setup
+
+Run full application using Docker:
+
+```bash
+docker-compose up --build
+```
+
+Services:
+- Backend: Node.js API (port 5000)
+- Frontend: React app via Nginx (port 3000)
+- MongoDB: Database container (port 27017)
+
+Access URLs:
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:5000`
+
+Docker files included:
+- `backend/Dockerfile`
+- `backend/.dockerignore`
+- `frontend/Dockerfile`
+- `frontend/.dockerignore`
+- `frontend/nginx.conf`
+- `docker-compose.yml`
+
+Important backend env for Docker Compose:
+
+```env
+MONGODB_URI=mongodb://mongo:27017/digital-wallet
+```
+
+Notes:
+- Keep `.env` local only (never commit).
+- Keep `.env.example` committed as template.
+
 ## Production Checklist (Before DevOps)
 
 - Add Razorpay webhook verification for reconciliation and dispute-safe settlement.
