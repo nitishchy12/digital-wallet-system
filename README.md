@@ -285,6 +285,7 @@ Services:
 - Backend: Node.js API (port 5000)
 - Frontend: React app via Nginx (port 3000)
 - MongoDB: Database container (port 27017)
+- Backend healthcheck: `GET /api/health` (used by Docker healthcheck)
 
 Access URLs:
 - Frontend: `http://localhost:3000`
@@ -307,6 +308,8 @@ MONGODB_URI=mongodb://mongo:27017/digital-wallet
 Notes:
 - Keep `.env` local only (never commit).
 - Keep `.env.example` committed as template.
+- `docker-compose.yml` uses conditional `depends_on` for startup ordering.
+- Backend Docker image is optimized with multi-stage build and runs as non-root user.
 
 ## Production Checklist (Before DevOps)
 
