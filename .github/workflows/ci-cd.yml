@@ -1,0 +1,50 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      # 2. Setup Node.js
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      # 3. Install backend dependencies
+      - name: Install Backend Dependencies
+        run: |
+          cd backend
+          npm install
+
+      # 4. Run backend tests
+      - name: Run Backend Tests
+        run: |
+          cd backend
+          npm test
+
+      # 5. Build backend Docker image
+      - name: Build Backend Image
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/wallet-backend ./backend
+
+      # 6. Build frontend Docker image
+      - name: Build Frontend Image
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/wallet-frontend ./frontend
+
+      # 7. Login to Docker Hub
+      - name: Docker Login
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      # 8. Push images
+      - name: Push Docker Images
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/wallet-backend
+          docker push ${{ secrets.DOCKER_USERNAME }}/wallet-frontend
