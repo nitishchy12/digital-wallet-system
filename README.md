@@ -279,3 +279,98 @@ Current backend test suites:
 - Add more API and integration tests (auth, wallet, payment verify).
 - Add refresh-token storage hardening (hash refresh token in DB).
 - Add alerting/monitoring sinks for logs (ELK, CloudWatch, or Grafana stack).
+
+## Test Scenarios
+
+### Authentication
+- User registration with valid details
+- OTP verification success and failure
+- Login with correct and incorrect credentials
+- Refresh token flow
+
+### Wallet
+- Fetch wallet balance
+- Transfer money between users
+- Prevent transfer with insufficient balance
+
+### Payment
+- Create Razorpay order
+- Successful payment verification
+- Failed/invalid signature verification
+- Webhook reconciliation
+
+### Idempotency
+- Prevent duplicate transfer requests
+- Prevent duplicate add-money requests
+
+### Analytics
+- Fetch monthly transaction summary
+- Fetch top receivers
+
+## Detailed Test Cases
+
+### Authentication
+
+| Test Case | Input | Expected Output |
+|---|---|---|
+| Register valid user | Valid email/password | Success response |
+| Register duplicate email | Existing email | Error |
+| Login valid | Correct credentials | JWT token |
+| Login invalid | Wrong password | Error |
+| OTP valid | Correct OTP | Verified |
+| OTP invalid | Wrong OTP | Error |
+
+### Payment (Razorpay)
+
+| Test Case | Input | Expected Output |
+|---|---|---|
+| Create order | Valid amount | Order created |
+| Verify payment valid | Correct signature | Wallet updated |
+| Verify payment invalid | Wrong signature | Rejected |
+| Duplicate verify | Same idempotency key | No duplicate credit |
+
+### Wallet Transfer
+
+| Test Case | Input | Expected Output |
+|---|---|---|
+| Valid transfer | Sufficient balance | Success |
+| Insufficient balance | Low balance | Error |
+| Invalid receiver | Wrong email | Error |
+| Duplicate transfer | Same idempotency key | Single transaction |
+
+### Analytics
+
+| Test Case | Input | Expected Output |
+|---|---|---|
+| Fetch analytics | Valid user | Data returned |
+| No transactions | Empty data | Default values |
+
+## Edge Cases
+
+### Wallet / Payments
+- Double-click on Pay button
+- Network retry causing duplicate request
+- Payment success but verify API fails
+- Webhook arrives before verify API
+- Webhook arrives twice
+
+### Authentication
+- Expired JWT token
+- Refresh token reuse (attack scenario)
+- Invalid OTP attempts multiple times
+
+### Concurrency
+- Two transfers at same time
+- Transfer plus add money simultaneously
+
+### Data Integrity
+- Negative amount input
+- Large amount overflow
+- Self-transfer (user sending to self)
+
+## Failure Handling
+
+- All wallet operations use MongoDB transactions to ensure atomicity
+- Idempotency keys prevent duplicate financial operations
+- Payment verification ensures wallet updates only after signature validation
+- Webhook reconciliation ensures eventual consistency between payment gateway and wallet state
