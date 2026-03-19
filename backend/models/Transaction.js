@@ -25,7 +25,7 @@ const TransactionSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["SEND", "RECEIVE", "ADD_MONEY"],
+      enum: ["SEND", "RECEIVE", "TRANSFER", "ADD_MONEY"],
       required: true,
     },
 
@@ -33,6 +33,27 @@ const TransactionSchema = new mongoose.Schema(
       type: String,
       enum: ["SUCCESS", "FAILED", "PENDING"],
       default: "SUCCESS",
+    },
+
+    description: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+    },
+
+    paymentGateway: {
+      type: String,
+      enum: ["INTERNAL", "MOCK", "RAZORPAY", "STRIPE"],
+      default: "INTERNAL",
+    },
+
+    processedAt: {
+      type: Date,
+    },
+
+    balanceSnapshot: {
+      senderBalance: Number,
+      receiverBalance: Number,
     },
   },
   { timestamps: true }

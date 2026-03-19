@@ -82,7 +82,7 @@ const ForgotPassword = () => {
 
           <div className="text-center">
             <Link
-              to="/login"
+              to="/signin"
               className="text-sm text-primary-600 hover:text-primary-500"
             >
               Back to sign in
@@ -95,6 +95,7 @@ const ForgotPassword = () => {
 };
 
 export default ForgotPassword;
+
 
 
 

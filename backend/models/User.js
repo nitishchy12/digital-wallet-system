@@ -77,9 +77,12 @@ UserSchema.methods.comparePassword = function (password) {
 /* 📱 QR Payload */
 UserSchema.methods.generateQRData = function () {
   return {
+    type: "WALLET_QR",
     userId: this._id,
     name: this.name,
     phone: this.phone,
+    email: this.email,
+    timestamp: Date.now(),
   };
 };
 

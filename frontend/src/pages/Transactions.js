@@ -141,7 +141,7 @@ const Transactions = () => {
     <div className="max-w-4xl mx-auto">
       <div className="mb-6">
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/dashboard')}
           className="flex items-center text-gray-600 hover:text-gray-900 mb-4"
         >
           <FiArrowLeft className="h-5 w-5 mr-2" />

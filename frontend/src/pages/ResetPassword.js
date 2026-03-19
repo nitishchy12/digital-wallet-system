@@ -29,7 +29,7 @@ const ResetPassword = () => {
     try {
       await api.post('/auth/reset-password', { token, password });
       toast.success('Password reset successfully. Please sign in.');
-      navigate('/login');
+      navigate('/signin');
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to reset password';
       toast.error(message);
@@ -141,7 +141,7 @@ const ResetPassword = () => {
 
           <div className="text-center">
             <Link
-              to="/login"
+              to="/signin"
               className="text-sm text-primary-600 hover:text-primary-500"
             >
               Back to sign in
@@ -154,6 +154,7 @@ const ResetPassword = () => {
 };
 
 export default ResetPassword;
+
 
 
 

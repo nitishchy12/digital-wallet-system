@@ -73,6 +73,12 @@ const AddMoney = () => {
 
       const { transaction, paymentData } = orderResponse.data.data;
 
+      if (selectedMethod === 'mock') {
+        toast.success(orderResponse.data.message || 'Money added successfully!');
+        navigate('/dashboard');
+        return;
+      }
+
       if (selectedMethod === 'razorpay') {
         // Load Razorpay script
         const script = document.createElement('script');
@@ -96,7 +102,7 @@ const AddMoney = () => {
                 });
 
                 toast.success('Money added successfully!');
-                navigate('/');
+                navigate('/dashboard');
               } catch (error) {
                 console.error('Payment verification failed:', error);
                 toast.error('Payment verification failed');
@@ -124,7 +130,11 @@ const AddMoney = () => {
         };
         
         document.body.appendChild(script);
+        return;
       }
+
+      toast.error('Selected payment method is not supported yet');
+      setIsLoading(false);
     } catch (error) {
       console.error('Payment initiation failed:', error);
       toast.error('Failed to initiate payment');
@@ -144,7 +154,7 @@ const AddMoney = () => {
     <div className="max-w-2xl mx-auto">
       <div className="mb-6">
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/dashboard')}
           className="flex items-center text-gray-600 hover:text-gray-900 mb-4"
         >
           <FiArrowLeft className="h-5 w-5 mr-2" />

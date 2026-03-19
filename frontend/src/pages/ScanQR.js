@@ -34,7 +34,7 @@ const ScanQR = () => {
             toast.success("QR scanned successfully");
 
             // Redirect to Send Money with prefill
-            navigate("/send-money", {
+            navigate("/send", {
               state: {
                 email: qrData.email,
                 name: qrData.name,

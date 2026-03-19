@@ -20,13 +20,13 @@ const VerifyOTP = () => {
 
   useEffect(() => {
     if (isAuthenticated && !loading) {
-      navigate('/');
+      navigate('/dashboard');
     }
   }, [isAuthenticated, loading, navigate]);
 
   useEffect(() => {
     if (!email) {
-      navigate('/register');
+      navigate('/signup');
       return;
     }
 
@@ -90,7 +90,7 @@ const VerifyOTP = () => {
     try {
       const result = await verifyOTP(email, otpString);
       if (result.success) {
-        navigate('/');
+        navigate('/dashboard');
       }
     } catch (error) {
       console.error('OTP verification error:', error);
@@ -225,7 +225,7 @@ const VerifyOTP = () => {
           <div className="text-center">
             <button
               type="button"
-              onClick={() => navigate('/register')}
+              onClick={() => navigate('/signup')}
               className="text-sm text-gray-500 hover:text-gray-700"
             >
               ← Back to registration

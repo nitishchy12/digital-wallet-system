@@ -56,7 +56,7 @@ api.interceptors.response.use(
         toast.error('Please login to continue');
         localStorage.removeItem('accessToken');
         localStorage.removeItem('user');
-        window.location.href = '/login';
+        window.location.href = '/signin';
         break;
 
       case 403:

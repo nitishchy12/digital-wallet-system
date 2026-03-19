@@ -21,7 +21,7 @@ const Register = () => {
 
   useEffect(() => {
     if (isAuthenticated && !loading) {
-      navigate('/');
+      navigate('/dashboard');
     }
   }, [isAuthenticated, loading, navigate]);
 
@@ -133,7 +133,7 @@ const Register = () => {
           <p className="mt-2 text-center text-sm text-gray-600">
             Or{' '}
             <Link
-              to="/login"
+              to="/signin"
               className="font-medium text-primary-600 hover:text-primary-500"
             >
               sign in to existing account

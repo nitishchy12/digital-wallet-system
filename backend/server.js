@@ -52,9 +52,39 @@ const authLimiter = rateLimit({
 });
 
 // MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ MongoDB connected successfully'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
+const DEFAULT_MONGODB_URI = 'mongodb://localhost:27017/digital-wallet';
+
+const connectMongoDB = async () => {
+  const configuredUri = process.env.MONGODB_URI || DEFAULT_MONGODB_URI;
+
+  try {
+    await mongoose.connect(configuredUri);
+    console.log(`MongoDB connected successfully: ${configuredUri}`);
+    return;
+  } catch (error) {
+    const shouldFallbackToLocalhost =
+      configuredUri.includes('mongo:27017') &&
+      (error?.name === 'MongooseServerSelectionError' || error?.code === 'ENOTFOUND');
+
+    if (!shouldFallbackToLocalhost) {
+      console.error('MongoDB connection error:', error);
+      return;
+    }
+
+    console.warn(
+      `MongoDB host "mongo" was not reachable. Retrying with local MongoDB URI: ${DEFAULT_MONGODB_URI}`
+    );
+
+    try {
+      await mongoose.connect(DEFAULT_MONGODB_URI);
+      console.log(`MongoDB connected successfully: ${DEFAULT_MONGODB_URI}`);
+    } catch (fallbackError) {
+      console.error('MongoDB connection error:', fallbackError);
+    }
+  }
+};
+
+connectMongoDB();
 
 // Socket events
 io.on('connection', (socket) => {
@@ -100,3 +130,4 @@ app.use('*', (_, res) => {
 server.listen(process.env.PORT || 5000, () => {
   console.log(`🚀 Server running on port ${process.env.PORT || 5000}`);
 });
+

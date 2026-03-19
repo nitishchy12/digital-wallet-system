@@ -51,20 +51,24 @@ function App() {
             
             <Routes>
               {/* Public Routes */}
-              <Route path="/login" element={<Login />} />
-              <Route path="/register" element={<Register />} />
+              <Route path="/signup" element={<Register />} />
+              <Route path="/signin" element={<Login />} />
+              <Route path="/login" element={<Navigate to="/signin" replace />} />
+              <Route path="/register" element={<Navigate to="/signup" replace />} />
               <Route path="/verify-otp" element={<VerifyOTP />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               
               {/* Protected Routes */}
-              <Route path="/" element={
+              <Route path="/dashboard" element={
                 <ProtectedRoute>
                   <Layout>
                     <Dashboard />
                   </Layout>
                 </ProtectedRoute>
               } />
+
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
               
               <Route path="/add-money" element={
                 <ProtectedRoute>
@@ -74,13 +78,14 @@ function App() {
                 </ProtectedRoute>
               } />
               
-              <Route path="/send-money" element={
+              <Route path="/send" element={
                 <ProtectedRoute>
                   <Layout>
                     <SendMoney />
                   </Layout>
                 </ProtectedRoute>
               } />
+              <Route path="/send-money" element={<Navigate to="/send" replace />} />
               
               <Route path="/transactions" element={
                 <ProtectedRoute>

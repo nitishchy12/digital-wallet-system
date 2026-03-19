@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
 import { FiArrowLeft, FiSearch, FiSend, FiUser, FiDollarSign } from 'react-icons/fi';
 import toast from 'react-hot-toast';
@@ -15,34 +15,20 @@ const SendMoney = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const quickAmounts = [100, 500, 1000, 2000, 5000];
 
-  useEffect(() => {
-    fetchWalletBalance();
-  }, []);
-
-  useEffect(() => {
-    if (searchQuery.length >= 2) {
-      const debounceTimer = setTimeout(() => {
-        searchUsers();
-      }, 300);
-      return () => clearTimeout(debounceTimer);
-    } else {
-      setSearchResults([]);
-    }
-  }, [searchQuery, searchUsers]);
-
-  const fetchWalletBalance = async () => {
+  const fetchWalletBalance = useCallback(async () => {
     try {
       const response = await api.get('/wallet/balance');
       setWalletBalance(response.data.data.balance);
     } catch (error) {
       console.error('Failed to fetch wallet balance:', error);
     }
-  };
+  }, []);
 
-  const searchUsers = async () => {
+  const searchUsers = useCallback(async () => {
     if (!searchQuery.trim()) return;
     
     setIsSearching(true);
@@ -55,7 +41,38 @@ const SendMoney = () => {
     } finally {
       setIsSearching(false);
     }
-  };
+  }, [searchQuery]);
+
+  useEffect(() => {
+    fetchWalletBalance();
+  }, [fetchWalletBalance]);
+
+  useEffect(() => {
+    if (searchQuery.length >= 2) {
+      const debounceTimer = setTimeout(() => {
+        searchUsers();
+      }, 300);
+      return () => clearTimeout(debounceTimer);
+    }
+
+    setSearchResults([]);
+  }, [searchQuery, searchUsers]);
+
+  useEffect(() => {
+    const qrEmail = location.state?.email;
+    if (!qrEmail) {
+      return;
+    }
+
+    setSelectedUser({
+      _id: `qr-${qrEmail}`,
+      email: qrEmail,
+      name: location.state?.name || qrEmail.split('@')[0] || 'User'
+    });
+    setSearchQuery('');
+    setSearchResults([]);
+    setStep(2);
+  }, [location.state]);
 
   const handleUserSelect = (selectedUser) => {
     setSelectedUser(selectedUser);
@@ -99,7 +116,7 @@ const SendMoney = () => {
       });
 
       toast.success(response.data.message);
-      navigate('/');
+      navigate('/dashboard');
     } catch (error) {
       console.error('Money transfer failed:', error);
       const message = error.response?.data?.message || 'Transfer failed';
@@ -387,7 +404,7 @@ const SendMoney = () => {
     <div className="max-w-2xl mx-auto">
       <div className="mb-6">
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/dashboard')}
           className="flex items-center text-gray-600 hover:text-gray-900 mb-4"
         >
           <FiArrowLeft className="h-5 w-5 mr-2" />

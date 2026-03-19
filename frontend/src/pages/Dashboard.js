@@ -90,7 +90,7 @@ const Dashboard = () => {
     },
     {
       name: 'Send Money',
-      href: '/send-money',
+      href: '/send',
       icon: FiSend,
       color: 'bg-blue-500 hover:bg-blue-600',
       description: 'Transfer to others'

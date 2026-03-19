@@ -25,9 +25,9 @@ const Layout = ({ children }) => {
   const navigate = useNavigate();
 
   const navigation = [
-    { name: 'Dashboard', href: '/', icon: FiHome },
+    { name: 'Dashboard', href: '/dashboard', icon: FiHome },
     { name: 'Add Money', href: '/add-money', icon: FiPlus },
-    { name: 'Send Money', href: '/send-money', icon: FiSend },
+    { name: 'Send Money', href: '/send', icon: FiSend },
     { name: 'Transactions', href: '/transactions', icon: FiList },
     { name: 'My QR Code', href: '/qr-code', icon: FiSquare },
     { name: 'Scan QR', href: '/scan-qr', icon: FiCamera },
@@ -36,7 +36,7 @@ const Layout = ({ children }) => {
 
   const handleLogout = async () => {
     await logout();
-    navigate('/login');
+    navigate('/signin');
   };
 
   return (
