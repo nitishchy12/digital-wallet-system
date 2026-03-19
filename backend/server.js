@@ -36,7 +36,16 @@ global.io = io;
 app.use(helmet());
 app.use(cors({ origin: FRONTEND_URL, credentials: true }));
 app.use(cookieParser());
-app.use(express.json({ limit: '10mb' }));
+app.use(
+  express.json({
+    limit: '10mb',
+    verify: (req, res, buf) => {
+      if (req.originalUrl === '/api/payment/webhook') {
+        req.rawBody = buf.toString('utf8');
+      }
+    }
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(
   morgan('combined', {

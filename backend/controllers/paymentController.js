@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const Razorpay = require('razorpay');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
+const PaymentWebhookEvent = require('../models/PaymentWebhookEvent');
 const logger = require('../utils/logger');
 
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
@@ -18,6 +19,20 @@ const getIdempotencyKey = (req) => {
   const bodyKey = req.body?.idempotencyKey;
   const key = (headerKey || bodyKey || '').toString().trim();
   return key || null;
+};
+
+const verifyRazorpaySignature = (payload, signature, secret) => {
+  if (!payload || !signature || !secret) {
+    return false;
+  }
+
+  const expectedSignature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+
+  if (expectedSignature.length !== signature.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(Buffer.from(expectedSignature), Buffer.from(signature));
 };
 
 const createMockAddMoneyTransaction = async ({ userId, amount, paymentGateway, idempotencyKey }) => {
@@ -86,11 +101,13 @@ const createPaymentOrder = async (req, res, next) => {
         idempotencyUserId: userId,
         idempotencyKey,
         type: 'ADD_MONEY'
-      }).sort({ createdAt: -1 });
+      })
+        .sort({ createdAt: -1 })
+        .select('_id amount status gatewayOrderId idempotencyKey createdAt');
     }
 
     if (existingTransaction && existingTransaction.status === 'SUCCESS') {
-      const wallet = await Wallet.findOne({ userId }).select('balance');
+      const wallet = await Wallet.findOne({ userId }).select('balance').lean();
 
       return res.status(200).json({
         success: true,
@@ -251,7 +268,7 @@ const verifyPayment = async (req, res, next) => {
 
     if (transaction.status === 'SUCCESS') {
       await session.abortTransaction();
-      const wallet = await Wallet.findOne({ userId }).select('balance');
+      const wallet = await Wallet.findOne({ userId }).select('balance').lean();
 
       return res.status(200).json({
         success: true,
@@ -272,11 +289,7 @@ const verifyPayment = async (req, res, next) => {
     }
 
     const payload = `${razorpayOrderId}|${razorpayPaymentId}`;
-    const expectedSignature = crypto.createHmac('sha256', RAZORPAY_KEY_SECRET).update(payload).digest('hex');
-
-    const isValidSignature =
-      expectedSignature.length === razorpaySignature.length &&
-      crypto.timingSafeEqual(Buffer.from(expectedSignature), Buffer.from(razorpaySignature));
+    const isValidSignature = verifyRazorpaySignature(payload, razorpaySignature, RAZORPAY_KEY_SECRET);
 
     if (!isValidSignature) {
       await Transaction.updateOne(
@@ -375,10 +388,226 @@ const verifyPayment = async (req, res, next) => {
 };
 
 const handleWebhook = async (req, res) => {
-  return res.status(200).json({
-    success: true,
-    message: 'Webhook endpoint active'
-  });
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const signature = req.headers['x-razorpay-signature'];
+    const rawBody = req.rawBody;
+
+    if (!webhookSecret) {
+      return res.status(503).json({
+        success: false,
+        message: 'Razorpay webhook secret is not configured'
+      });
+    }
+
+    if (!verifyRazorpaySignature(rawBody, signature, webhookSecret)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid webhook signature'
+      });
+    }
+
+    const eventType = req.body?.event;
+    const paymentEntity = req.body?.payload?.payment?.entity;
+    const orderId = paymentEntity?.order_id;
+    const paymentId = paymentEntity?.id;
+    const eventId = `${eventType || 'unknown'}:${paymentId || orderId || Date.now()}`;
+
+    const webhookLogInsert = await PaymentWebhookEvent.updateOne(
+      { eventId },
+      {
+        $setOnInsert: {
+          eventId,
+          eventType: eventType || 'unknown',
+          status: 'RECEIVED',
+          payloadMeta: {
+            orderId,
+            paymentId
+          }
+        }
+      },
+      { upsert: true }
+    );
+
+    if (webhookLogInsert.matchedCount > 0) {
+      await PaymentWebhookEvent.updateOne(
+        { eventId },
+        { $set: { status: 'DUPLICATE', processedAt: new Date(), reason: 'Already processed' } }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Duplicate webhook ignored'
+      });
+    }
+
+    if (eventType !== 'payment.captured') {
+      await PaymentWebhookEvent.updateOne(
+        { eventId },
+        { $set: { status: 'SKIPPED', processedAt: new Date(), reason: `Unhandled event ${eventType}` } }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Webhook event skipped'
+      });
+    }
+
+    const transaction = await Transaction.findOne({
+      gatewayOrderId: orderId,
+      paymentGateway: 'RAZORPAY'
+    }).select('_id receiverId amount status gatewayMeta');
+
+    if (!transaction) {
+      await PaymentWebhookEvent.updateOne(
+        { eventId },
+        { $set: { status: 'ORPHAN', processedAt: new Date(), reason: 'Transaction not found' } }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Webhook recorded; transaction not found'
+      });
+    }
+
+    if (transaction.status === 'SUCCESS') {
+      await PaymentWebhookEvent.updateOne(
+        { eventId },
+        {
+          $set: {
+            status: 'DUPLICATE',
+            processedAt: new Date(),
+            transactionId: transaction._id,
+            reason: 'Transaction already processed'
+          }
+        }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Webhook acknowledged; transaction already processed'
+      });
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const transactionUpdate = await Transaction.updateOne(
+        { _id: transaction._id, status: 'PENDING' },
+        {
+          $set: {
+            status: 'SUCCESS',
+            processedAt: new Date(),
+            gatewayPaymentId: paymentId,
+            gatewaySignature: signature,
+            gatewayMeta: {
+              ...(transaction.gatewayMeta || {}),
+              webhookEvent: eventType
+            }
+          }
+        },
+        { session }
+      );
+
+      if (transactionUpdate.modifiedCount !== 1) {
+        await session.abortTransaction();
+
+        await PaymentWebhookEvent.updateOne(
+          { eventId },
+          {
+            $set: {
+              status: 'DUPLICATE',
+              processedAt: new Date(),
+              transactionId: transaction._id,
+              reason: 'Transaction already processed by another flow'
+            }
+          }
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: 'Webhook acknowledged; already processed'
+        });
+      }
+
+      await Wallet.updateOne(
+        { userId: transaction.receiverId },
+        {
+          $setOnInsert: {
+            userId: transaction.receiverId,
+            currency: 'INR',
+            balance: 0
+          },
+          $inc: { balance: transaction.amount }
+        },
+        { upsert: true, session }
+      );
+
+      const wallet = await Wallet.findOne({ userId: transaction.receiverId }).session(session);
+
+      await Transaction.updateOne(
+        { _id: transaction._id },
+        {
+          $set: {
+            balanceSnapshot: {
+              receiverBalance: wallet.balance
+            }
+          }
+        },
+        { session }
+      );
+
+      await session.commitTransaction();
+
+      await PaymentWebhookEvent.updateOne(
+        { eventId },
+        {
+          $set: {
+            status: 'PROCESSED',
+            processedAt: new Date(),
+            transactionId: transaction._id
+          }
+        }
+      );
+
+      if (global.io) {
+        const updatedTransaction = await Transaction.findById(transaction._id);
+        global.io.to(`user-${transaction.receiverId}`).emit('transaction-update', {
+          type: 'MONEY_ADDED',
+          transaction: updatedTransaction.toObject(),
+          newBalance: wallet.balance
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Webhook processed successfully'
+      });
+    } catch (error) {
+      await session.abortTransaction();
+      await PaymentWebhookEvent.updateOne(
+        { eventId },
+        {
+          $set: {
+            status: 'FAILED',
+            processedAt: new Date(),
+            transactionId: transaction._id,
+            reason: error.message
+          }
+        }
+      );
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  } catch (error) {
+    logger.error('Razorpay webhook error: %s', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Webhook processing failed'
+    });
+  }
 };
 
 const getPaymentMethods = async (req, res, next) => {

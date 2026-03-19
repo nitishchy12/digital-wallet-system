@@ -23,6 +23,8 @@ A full-stack digital wallet project with authentication, OTP verification, walle
 - Added request logging with Morgan and structured logs with Winston.
 - Added indexes for scale on `email`, `createdAt`, `senderId`, and `receiverId` query paths.
 - Added request idempotency keys for add-money and transfer APIs to prevent duplicate processing.
+- Stores hashed refresh tokens in DB and rotates refresh token on login/refresh.
+- Added Razorpay webhook verification and retry-safe reconciliation handling.
 
 ## Tech Stack
 
@@ -167,6 +169,9 @@ Frontend runs on `http://localhost:3000`.
 - `POST /api/payment/create-order`
 - `POST /api/payment/verify`
 - `POST /api/payment/webhook`
+  - Verifies `x-razorpay-signature`
+  - Reconciles `payment.captured` events
+  - Ignores duplicate retries safely
 
 ### User
 - `GET /api/user/profile`
@@ -257,6 +262,11 @@ Suggested Postman variables:
 - `npm run dev` - nodemon server
 - `npm start` - node server
 - `npm test` - jest
+
+Current backend test suites:
+- `authController.test.js`
+- `walletController.test.js`
+- `paymentController.test.js`
 
 ### Frontend
 - `npm start` - dev server

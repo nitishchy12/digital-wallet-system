@@ -23,6 +23,7 @@ jest.mock('../models/Wallet', () => ({
 
 jest.mock('../models/Transaction', () => ({
   create: jest.fn(),
+  findOne: jest.fn(),
   aggregate: jest.fn(),
   find: jest.fn(),
   countDocuments: jest.fn()
@@ -30,6 +31,7 @@ jest.mock('../models/Transaction', () => ({
 
 const User = require('../models/User');
 const Wallet = require('../models/Wallet');
+const Transaction = require('../models/Transaction');
 const { getWalletBalance, transferMoney } = require('../controllers/walletController');
 
 const makeRes = () => {
@@ -96,6 +98,41 @@ describe('walletController', () => {
       expect.objectContaining({
         success: false,
         message: 'Insufficient wallet balance'
+      })
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  test('transferMoney returns existing success response for duplicate idempotency key', async () => {
+    Transaction.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        sort: jest.fn().mockResolvedValue({
+          _id: 'tx-1',
+          status: 'SUCCESS',
+          receiverId: { name: 'Receiver', email: 'receiver@example.com' }
+        })
+      })
+    });
+
+    Wallet.findOne.mockReturnValue({
+      select: jest.fn().mockResolvedValue({ balance: 999 })
+    });
+
+    const req = {
+      user: { _id: 'sender-1' },
+      headers: { 'x-idempotency-key': 'same-key' },
+      body: { receiverEmail: 'receiver@example.com', amount: 500 }
+    };
+    const res = makeRes();
+    const next = jest.fn();
+
+    await transferMoney(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        message: 'Transfer already processed for this request'
       })
     );
     expect(next).not.toHaveBeenCalled();

@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Wallet = require('../models/Wallet');
 const { sendOTPEmail, sendResetPasswordEmail } = require('../utils/emailService');
 const { generateQRCode } = require('../utils/qrService');
+const { hashRefreshToken, safeTokenEqual } = require('../utils/tokenSecurity');
 const logger = require('../utils/logger');
 
 const JWT_SECRET =
@@ -122,7 +123,8 @@ const verifyOTP = async (req, res, next) => {
     }
 
     const { accessToken, refreshToken } = generateTokens(user._id);
-    user.refreshToken = refreshToken;
+    user.refreshTokenHash = hashRefreshToken(refreshToken);
+    user.refreshToken = null;
     await user.save();
 
     return res.status(200).json({
@@ -205,7 +207,8 @@ const login = async (req, res, next) => {
     }
 
     const { accessToken, refreshToken } = generateTokens(user._id);
-    user.refreshToken = refreshToken;
+    user.refreshTokenHash = hashRefreshToken(refreshToken);
+    user.refreshToken = null;
     user.lastLogin = new Date();
 
     await user.save();
@@ -301,9 +304,12 @@ const refreshToken = async (req, res, next) => {
     const { refreshToken: incomingRefreshToken } = req.body;
 
     const decoded = jwt.verify(incomingRefreshToken, JWT_REFRESH_SECRET);
-    const user = await User.findById(decoded.userId).select('refreshToken isActive');
+    const user = await User.findById(decoded.userId).select('refreshTokenHash refreshToken isActive');
 
-    if (!user || !user.isActive || user.refreshToken !== incomingRefreshToken) {
+    const isLegacyMatch = Boolean(user?.refreshToken && user.refreshToken === incomingRefreshToken);
+    const isHashMatch = Boolean(user?.refreshTokenHash && safeTokenEqual(incomingRefreshToken, user.refreshTokenHash));
+
+    if (!user || !user.isActive || (!isHashMatch && !isLegacyMatch)) {
       return res.status(401).json({
         success: false,
         message: 'Invalid refresh token'
@@ -311,7 +317,8 @@ const refreshToken = async (req, res, next) => {
     }
 
     const tokens = generateTokens(user._id);
-    user.refreshToken = tokens.refreshToken;
+    user.refreshTokenHash = hashRefreshToken(tokens.refreshToken);
+    user.refreshToken = null;
     await user.save();
 
     return res.status(200).json({
@@ -329,10 +336,11 @@ const refreshToken = async (req, res, next) => {
 
 const logout = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id).select('refreshToken');
+    const user = await User.findById(req.user._id).select('refreshToken refreshTokenHash');
 
     if (user) {
       user.refreshToken = null;
+      user.refreshTokenHash = null;
       await user.save();
     }
 

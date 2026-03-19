@@ -37,6 +37,10 @@ const UserSchema = new mongoose.Schema(
     verificationOTP: String,
     otpExpiry: Date,
     refreshToken: String,
+    refreshTokenHash: {
+      type: String,
+      select: false
+    },
     qrCode: String,
     role: {
       type: String,
