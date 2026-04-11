@@ -96,6 +96,11 @@ RAZORPAY_KEY_ID=your_razorpay_key_id
 RAZORPAY_KEY_SECRET=your_razorpay_key_secret
 ```
 
+MongoDB config is environment-aware:
+- `NODE_ENV=development` -> defaults to `mongodb://localhost:27017/digital-wallet`
+- `NODE_ENV=production` -> defaults to `mongodb://mongo:27017/digital-wallet`
+- Explicit `MONGODB_URI` still overrides both
+
 Start backend:
 
 ```bash
@@ -306,6 +311,7 @@ Docker files included:
 Important backend env for Docker Compose:
 
 ```env
+NODE_ENV=production
 MONGODB_URI=mongodb://mongo:27017/digital-wallet
 ```
 
@@ -314,6 +320,7 @@ Notes:
 - Keep `.env.example` committed as template.
 - `docker-compose.yml` uses conditional `depends_on` for startup ordering.
 - Backend Docker image is optimized with multi-stage build and runs as non-root user.
+- Backend Mongo config now switches cleanly by environment, so local runs do not log Docker fallback warnings.
 
 ## CI/CD Setup
 

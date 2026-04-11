@@ -73,32 +73,30 @@ const authLimiter = rateLimit({
   message: { success: false, message: 'Too many authentication attempts. Try later.' }
 });
 
-const DEFAULT_MONGODB_URI = 'mongodb://localhost:27017/digital-wallet';
+const DEFAULT_MONGODB_URIS = {
+  development: 'mongodb://localhost:27017/digital-wallet',
+  production: 'mongodb://mongo:27017/digital-wallet'
+};
+
+const resolveMongoUri = () => {
+  if (process.env.MONGODB_URI) {
+    return process.env.MONGODB_URI;
+  }
+
+  return process.env.NODE_ENV === 'production'
+    ? DEFAULT_MONGODB_URIS.production
+    : DEFAULT_MONGODB_URIS.development;
+};
 
 const connectMongoDB = async () => {
-  const configuredUri = process.env.MONGODB_URI || DEFAULT_MONGODB_URI;
+  const configuredUri = resolveMongoUri();
 
   try {
     await mongoose.connect(configuredUri);
     logger.info('MongoDB connected successfully: %s', configuredUri);
-    return;
   } catch (error) {
-    const shouldFallbackToLocalhost =
-      configuredUri.includes('mongo:27017') &&
-      (error?.name === 'MongooseServerSelectionError' || error?.code === 'ENOTFOUND');
-
-    if (!shouldFallbackToLocalhost) {
-      logger.error('MongoDB connection error: %s', error.message);
-      throw error;
-    }
-
-    logger.warn(
-      'MongoDB host "mongo" unreachable. Retrying with local URI: %s',
-      DEFAULT_MONGODB_URI
-    );
-
-    await mongoose.connect(DEFAULT_MONGODB_URI);
-    logger.info('MongoDB connected successfully: %s', DEFAULT_MONGODB_URI);
+    logger.error('MongoDB connection error: %s', error.message);
+    throw error;
   }
 };
 
