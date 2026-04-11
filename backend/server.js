@@ -1,4 +1,5 @@
 const express = require('express');
+const fs = require('fs');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -78,14 +79,22 @@ const DEFAULT_MONGODB_URIS = {
   production: 'mongodb://mongo:27017/digital-wallet'
 };
 
+const isRunningInDocker = () =>
+  process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
+
 const resolveMongoUri = () => {
-  if (process.env.MONGODB_URI) {
-    return process.env.MONGODB_URI;
+  const configuredUri =
+    process.env.MONGODB_URI ||
+    (process.env.NODE_ENV === 'production'
+      ? DEFAULT_MONGODB_URIS.production
+      : DEFAULT_MONGODB_URIS.development);
+
+  // If Docker hostname is present during a normal local run, switch cleanly to localhost.
+  if (!isRunningInDocker() && configuredUri.includes('mongo:27017')) {
+    return configuredUri.replace('mongo:27017', 'localhost:27017');
   }
 
-  return process.env.NODE_ENV === 'production'
-    ? DEFAULT_MONGODB_URIS.production
-    : DEFAULT_MONGODB_URIS.development;
+  return configuredUri;
 };
 
 const connectMongoDB = async () => {

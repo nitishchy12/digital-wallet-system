@@ -27,6 +27,11 @@ A full-stack digital wallet project with authentication, OTP verification, walle
 - Stores hashed refresh tokens in DB and rotates refresh token on login/refresh.
 - Added Razorpay webhook verification and retry-safe reconciliation handling.
 
+### Auth Flow Fix
+- Handled `requiresVerification` flag in frontend auth state
+- Prevented unverified users from accessing protected wallet routes
+- Added proper redirect to OTP verification before dashboard access
+
 ## Tech Stack
 
 ### Frontend
@@ -100,6 +105,7 @@ MongoDB config is environment-aware:
 - `NODE_ENV=development` -> defaults to `mongodb://localhost:27017/digital-wallet`
 - `NODE_ENV=production` -> defaults to `mongodb://mongo:27017/digital-wallet`
 - Explicit `MONGODB_URI` still overrides both
+- If a Docker-style URI using `mongo` is present during a normal local run, the backend automatically switches to `localhost` to avoid startup crashes
 
 Start backend:
 
@@ -321,6 +327,7 @@ Notes:
 - `docker-compose.yml` uses conditional `depends_on` for startup ordering.
 - Backend Docker image is optimized with multi-stage build and runs as non-root user.
 - Backend Mongo config now switches cleanly by environment, so local runs do not log Docker fallback warnings.
+- If your local `.env` still contains `mongodb://mongo:27017/...`, the backend now auto-corrects it for non-Docker runs.
 
 ## CI/CD Setup
 

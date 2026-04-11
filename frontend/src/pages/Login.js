@@ -11,17 +11,17 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  const { login, isAuthenticated, loading } = useAuth();
+  const { login, isAuthenticated, loading, requiresVerification } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
   const from = location.state?.from?.pathname || '/dashboard';
 
   useEffect(() => {
-    if (isAuthenticated && !loading) {
+    if (isAuthenticated && !loading && !requiresVerification) {
       navigate(from, { replace: true });
     }
-  }, [isAuthenticated, loading, navigate, from]);
+  }, [isAuthenticated, loading, navigate, from, requiresVerification]);
 
   const handleChange = (e) => {
     setFormData({
@@ -37,7 +37,14 @@ const Login = () => {
     try {
       const result = await login(formData.email, formData.password);
       if (result.success) {
-        navigate(from, { replace: true });
+        if (result.requiresVerification) {
+          navigate('/verify-otp', {
+            replace: true,
+            state: { email: formData.email }
+          });
+        } else {
+          navigate(from, { replace: true });
+        }
       }
     } catch (error) {
       console.error('Login error:', error);

@@ -12,17 +12,17 @@ const VerifyOTP = () => {
   const [canResend, setCanResend] = useState(false);
   
   const inputRefs = useRef([]);
-  const { verifyOTP, resendOTP, isAuthenticated, loading } = useAuth();
+  const { verifyOTP, resendOTP, isAuthenticated, loading, requiresVerification, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   
-  const email = location.state?.email || '';
+  const email = location.state?.email || user?.email || '';
 
   useEffect(() => {
-    if (isAuthenticated && !loading) {
+    if (isAuthenticated && !loading && !requiresVerification) {
       navigate('/dashboard');
     }
-  }, [isAuthenticated, loading, navigate]);
+  }, [isAuthenticated, loading, navigate, requiresVerification]);
 
   useEffect(() => {
     if (!email) {

@@ -11,7 +11,7 @@ const initialState = {
   token: localStorage.getItem('accessToken'),
   isAuthenticated: false,
   loading: true,
-  requiresVerification: false
+  requiresVerification: localStorage.getItem('requiresVerification') === 'true'
 };
 
 /* ================= REDUCER ================= */
@@ -24,6 +24,10 @@ const authReducer = (state, action) => {
     case 'LOGIN_SUCCESS':
       localStorage.setItem('accessToken', action.payload.accessToken);
       localStorage.setItem('user', JSON.stringify(action.payload.user));
+      localStorage.setItem(
+        'requiresVerification',
+        String(Boolean(action.payload.requiresVerification))
+      );
 
       return {
         ...state,
@@ -31,12 +35,13 @@ const authReducer = (state, action) => {
         token: action.payload.accessToken,
         isAuthenticated: true,
         loading: false,
-        requiresVerification: false
+        requiresVerification: Boolean(action.payload.requiresVerification)
       };
 
     case 'LOGOUT':
       localStorage.removeItem('accessToken');
       localStorage.removeItem('user');
+      localStorage.removeItem('requiresVerification');
 
       return {
         ...state,
@@ -71,13 +76,15 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const token = localStorage.getItem('accessToken');
     const savedUser = localStorage.getItem('user');
+    const requiresVerification = localStorage.getItem('requiresVerification') === 'true';
 
     if (token && savedUser) {
       dispatch({
         type: 'LOGIN_SUCCESS',
         payload: {
           accessToken: token,
-          user: JSON.parse(savedUser)
+          user: JSON.parse(savedUser),
+          requiresVerification
         }
       });
     } else {
@@ -99,7 +106,11 @@ export const AuthProvider = ({ children }) => {
       });
 
       toast.success('Login successful!');
-      return { success: true };
+      return {
+        success: true,
+        requiresVerification: Boolean(response.data.data.requiresVerification),
+        user: response.data.data.user
+      };
 
     } catch (error) {
       dispatch({ type: 'SET_LOADING', payload: false });
