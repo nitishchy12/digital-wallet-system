@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-frontend
+  namespace: wallet
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wallet-frontend
+  template:
+    metadata:
+      labels:
+        app: wallet-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: nitishchy12/wallet-frontend:latest
+        ports:
+        - containerPort: 3000

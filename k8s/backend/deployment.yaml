@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-backend
+  namespace: wallet
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wallet-backend
+  template:
+    metadata:
+      labels:
+        app: wallet-backend
+    spec:
+      containers:
+      - name: backend
+        image: nitishchy12/wallet-backend:latest
+        ports:
+        - containerPort: 5000
