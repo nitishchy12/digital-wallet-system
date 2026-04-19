@@ -1,4 +1,4 @@
-# Digital Wallet (MERN)
+# Digital Wallet
 
 A full-stack digital wallet project with authentication, OTP verification, wallet transfers, transaction history, QR scan/pay flow, and admin endpoints.
 
@@ -8,6 +8,8 @@ A full-stack digital wallet project with authentication, OTP verification, walle
 - Payment supports **real Razorpay flow** (order create + signature verify + wallet update in transaction) and mock mode for local testing.
 - Backend is hardened with stricter validation, structured logging, global error handling, and atomic wallet operations.
 - CI/CD workflow is configured via GitHub Actions to run backend tests, build Docker images, and push to Docker Hub on `main` branch pushes.
+- **Transactions Dashboard upgraded:** Added Advanced Filtering (by date and amount) and Native CSV Export downloads via Blob streaming.
+- **MongoDB Fallbacks:** Developed an intelligent fallback wrapper that enables local non-replica-set MongoDB instances to process requests smoothly without throwing transaction cluster errors.
 - Frontend route flow follows:
   - `/signup`
   - `/signin`
@@ -172,7 +174,8 @@ Frontend runs on `http://localhost:3000`.
 - `GET /api/wallet/balance`
 - `GET /api/wallet/stats`
 - `GET /api/wallet/analytics`
-- `GET /api/wallet/transactions`
+- `GET /api/wallet/transactions` (Supports `type`, `startDate`, `endDate`, `minAmount`, `maxAmount`)
+- `GET /api/wallet/transactions/export` (Streams custom `.csv` Blob)
 - `GET /api/wallet/search-users`
 - `POST /api/wallet/transfer`
 
@@ -237,6 +240,7 @@ Use this order to test complete flow quickly:
    - `Authorization: Bearer {{token}}`
 
 5. `GET /api/wallet/balance`
+
 6. `POST /api/payment/create-order` (Razorpay or mock)
    - Body:
    ```json

@@ -13,6 +13,63 @@ const getIdempotencyKey = (req) => {
   return key || null;
 };
 
+// ---------------------------------------------------------------------------
+// Helper: start a Mongoose session + transaction.
+// Falls back gracefully if the MongoDB deployment doesn't support transactions
+// (e.g. standalone / local dev without a replica set).
+// ---------------------------------------------------------------------------
+const startSessionSafe = async () => {
+  try {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    return { session, useTransaction: true };
+  } catch (err) {
+    // Code 20 = "Transaction numbers are only allowed on a replica set member or mongos"
+    // Code 51 = "The given transaction number is incompatible with the existing transaction"
+    const isNoReplicaSet =
+      err.codeName === 'IllegalOperation' ||
+      err.code === 20 ||
+      err.code === 51 ||
+      /transaction/i.test(err.message);
+
+    if (isNoReplicaSet) {
+      logger.warn('MongoDB transactions not supported — falling back to non-transactional mode');
+      return { session: null, useTransaction: false };
+    }
+    throw err;
+  }
+};
+
+// Safe commit helper
+const commitSafe = async (session, useTransaction) => {
+  if (useTransaction && session) {
+    await session.commitTransaction();
+    session.endSession();
+  }
+};
+
+// Safe abort helper — never throws even if session is in a bad state
+const abortSafe = async (session, useTransaction) => {
+  if (!useTransaction || !session) return;
+  try {
+    await session.abortTransaction();
+  } catch (_) {
+    // ignore abort errors
+  } finally {
+    try {
+      session.endSession();
+    } catch (_) {
+      // ignore
+    }
+  }
+};
+
+// Session option helper
+const sessionOpt = (session, useTransaction) =>
+  useTransaction && session ? { session } : {};
+
+// ---------------------------------------------------------------------------
+
 const getWalletBalance = async (req, res, next) => {
   try {
     let wallet;
@@ -51,55 +108,72 @@ const getWalletBalance = async (req, res, next) => {
 };
 
 const transferMoney = async (req, res, next) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  // ── 1. Idempotency check BEFORE opening a session ──────────────────────
+  const { receiverEmail, description } = req.body;
+  const amount = Number(req.body.amount);
+  const senderId = req.user._id;
+  const idempotencyKey = getIdempotencyKey(req);
 
-  try {
-    const { receiverEmail, description } = req.body;
-    const amount = Number(req.body.amount);
-    const senderId = req.user._id;
-    const idempotencyKey = getIdempotencyKey(req);
+  if (idempotencyKey) {
+    const existingTransaction = await Transaction.findOne({
+      idempotencyUserId: senderId,
+      idempotencyKey,
+      type: 'TRANSFER'
+    })
+      .populate('receiverId', 'name email')
+      .sort({ createdAt: -1 });
 
-    if (idempotencyKey) {
-      const existingTransaction = await Transaction.findOne({
-        idempotencyUserId: senderId,
-        idempotencyKey,
-        type: 'TRANSFER'
-      })
-        .populate('receiverId', 'name email')
-        .sort({ createdAt: -1 });
+    if (existingTransaction?.status === 'SUCCESS') {
+      const senderWallet = await Wallet.findOne({ userId: senderId }).select('balance');
 
-      if (existingTransaction?.status === 'SUCCESS') {
-        const senderWallet = await Wallet.findOne({ userId: senderId }).select('balance');
-
-        return res.status(200).json({
-          success: true,
-          message: 'Transfer already processed for this request',
-          data: {
-            transaction: existingTransaction,
-            senderBalance: senderWallet?.balance || 0,
-            receiver: {
-              name: existingTransaction.receiverId?.name,
-              email: existingTransaction.receiverId?.email
-            }
+      return res.status(200).json({
+        success: true,
+        message: 'Transfer already processed for this request',
+        data: {
+          transaction: existingTransaction,
+          senderBalance: senderWallet?.balance || 0,
+          receiver: {
+            name: existingTransaction.receiverId?.name,
+            email: existingTransaction.receiverId?.email
           }
-        });
-      }
-
-      if (existingTransaction?.status === 'PENDING') {
-        return res.status(409).json({
-          success: false,
-          message: 'A transfer is already in progress for this request'
-        });
-      }
+        }
+      });
     }
 
-    const receiver = await User.findOne({ email: receiverEmail })
+    if (existingTransaction?.status === 'PENDING') {
+      return res.status(409).json({
+        success: false,
+        message: 'A transfer is already in progress for this request'
+      });
+    }
+  }
+
+  const isTransactionUnsupportedError = (err) =>
+    Boolean(
+      err &&
+        (err.codeName === 'IllegalOperation' ||
+          err.code === 20 ||
+          err.code === 51 ||
+          /transaction numbers are only allowed on a replica set member or mongos/i.test(err.message) ||
+          /transaction/i.test(err.message))
+    );
+
+  let attempt = 0;
+  let forceNoTransaction = false;
+
+  while (attempt < 2) {
+    attempt++;
+    const { session, useTransaction } = forceNoTransaction 
+      ? { session: null, useTransaction: false }
+      : await startSessionSafe();
+
+    try {
+      const receiver = await User.findOne({ email: receiverEmail })
       .select('_id name email isVerified isActive')
-      .session(session);
+      .then((doc) => doc); // no session needed for read
 
     if (!receiver) {
-      await session.abortTransaction();
+      await abortSafe(session, useTransaction);
       return res.status(404).json({
         success: false,
         message: 'Receiver not found'
@@ -107,7 +181,7 @@ const transferMoney = async (req, res, next) => {
     }
 
     if (!receiver.isVerified || !receiver.isActive) {
-      await session.abortTransaction();
+      await abortSafe(session, useTransaction);
       return res.status(400).json({
         success: false,
         message: 'Receiver account is not eligible to receive payments'
@@ -115,65 +189,55 @@ const transferMoney = async (req, res, next) => {
     }
 
     if (receiver._id.toString() === senderId.toString()) {
-      await session.abortTransaction();
+      await abortSafe(session, useTransaction);
       return res.status(400).json({
         success: false,
         message: 'Cannot transfer money to yourself'
       });
     }
 
+    // Ensure both wallets exist
     await Wallet.updateOne(
       { userId: senderId },
-      {
-        $setOnInsert: {
-          userId: senderId,
-          balance: 0,
-          currency: 'INR'
-        }
-      },
-      { upsert: true, session }
+      { $setOnInsert: { userId: senderId, balance: 0, currency: 'INR' } },
+      { upsert: true, ...sessionOpt(session, useTransaction) }
     );
 
     await Wallet.updateOne(
       { userId: receiver._id },
-      {
-        $setOnInsert: {
-          userId: receiver._id,
-          balance: 0,
-          currency: 'INR'
-        }
-      },
-      { upsert: true, session }
+      { $setOnInsert: { userId: receiver._id, balance: 0, currency: 'INR' } },
+      { upsert: true, ...sessionOpt(session, useTransaction) }
     );
 
+    // Atomic debit — only succeeds when balance >= amount
     const senderDebitResult = await Wallet.updateOne(
-      {
-        userId: senderId,
-        balance: { $gte: amount }
-      },
+      { userId: senderId, balance: { $gte: amount } },
       { $inc: { balance: -amount } },
-      { session }
+      sessionOpt(session, useTransaction)
     );
 
     if (senderDebitResult.modifiedCount !== 1) {
-      await session.abortTransaction();
+      await abortSafe(session, useTransaction);
       return res.status(400).json({
         success: false,
         message: 'Insufficient wallet balance'
       });
     }
 
+    // Credit receiver
     await Wallet.updateOne(
       { userId: receiver._id },
       { $inc: { balance: amount } },
-      { session }
+      sessionOpt(session, useTransaction)
     );
 
+    // Fetch updated balances
     const [senderWallet, receiverWallet] = await Promise.all([
-      Wallet.findOne({ userId: senderId }).session(session),
-      Wallet.findOne({ userId: receiver._id }).session(session)
+      Wallet.findOne({ userId: senderId }),
+      Wallet.findOne({ userId: receiver._id })
     ]);
 
+    // Create transaction record
     const [transaction] = await Transaction.create(
       [
         {
@@ -194,11 +258,12 @@ const transferMoney = async (req, res, next) => {
           }
         }
       ],
-      { session }
+      sessionOpt(session, useTransaction)
     );
 
-    await session.commitTransaction();
+    await commitSafe(session, useTransaction);
 
+    // Real-time socket notifications
     if (global.io) {
       global.io.to(`user-${senderId}`).emit('transaction-update', {
         type: 'TRANSFER_SENT',
@@ -213,6 +278,7 @@ const transferMoney = async (req, res, next) => {
       });
     }
 
+    // Fire-and-forget email notifications
     Promise.allSettled([
       sendTransactionEmail(req.user.email, req.user.name, {
         direction: 'SENT',
@@ -246,12 +312,18 @@ const transferMoney = async (req, res, next) => {
         }
       }
     });
-  } catch (error) {
-    await session.abortTransaction();
-    logger.error('Transfer money error: %s', error.message);
-    return next(error);
-  } finally {
-    session.endSession();
+    } catch (error) {
+      await abortSafe(session, useTransaction);
+
+      if (useTransaction && !forceNoTransaction && isTransactionUnsupportedError(error)) {
+        logger.warn('Transfer money falling back to non-transactional mode after MongoDB rejected the transaction');
+        forceNoTransaction = true;
+        continue;
+      }
+
+      logger.error('Transfer money error: %s', error.message);
+      return next(error);
+    }
   }
 };
 
@@ -262,9 +334,15 @@ const getTransactionHistory = async (req, res, next) => {
     const limit = Number(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    const match = {
-      $or: [{ senderId: userId }, { receiverId: userId }]
-    };
+    const match = {};
+
+    if (req.query.type === 'sent') {
+      match.senderId = userId;
+    } else if (req.query.type === 'received') {
+      match.receiverId = userId;
+    } else {
+      match.$or = [{ senderId: userId }, { receiverId: userId }];
+    }
 
     if (req.query.startDate || req.query.endDate) {
       match.createdAt = {};
@@ -561,11 +639,80 @@ const searchUsers = async (req, res, next) => {
   }
 };
 
+const exportTransactions = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+
+    const match = {};
+
+    if (req.query.type === 'sent') {
+      match.senderId = userId;
+    } else if (req.query.type === 'received') {
+      match.receiverId = userId;
+    } else {
+      match.$or = [{ senderId: userId }, { receiverId: userId }];
+    }
+
+    if (req.query.startDate || req.query.endDate) {
+      match.createdAt = {};
+      if (req.query.startDate) match.createdAt.$gte = new Date(req.query.startDate);
+      if (req.query.endDate) match.createdAt.$lte = new Date(req.query.endDate);
+    }
+
+    if (req.query.minAmount || req.query.maxAmount) {
+      match.amount = {};
+      if (req.query.minAmount) match.amount.$gte = Number(req.query.minAmount);
+      if (req.query.maxAmount) match.amount.$lte = Number(req.query.maxAmount);
+    }
+
+    const transactions = await Transaction.find(match)
+      .populate('senderId', 'name email')
+      .populate('receiverId', 'name email')
+      .sort({ createdAt: -1 });
+
+    const headers = ['Date', 'Transaction ID', 'Type', 'Counterparty Name', 'Counterparty Email', 'Amount', 'Status', 'Description'];
+    const rows = transactions.map((tx) => {
+      const isReceived = tx.receiverId && tx.receiverId._id.toString() === userId.toString();
+      const direction = isReceived ? 'RECEIVED' : 'SENT';
+      const counterparty = isReceived ? tx.senderId : tx.receiverId;
+      
+      const typeStr = tx.type === 'ADD_MONEY' ? 'ADD_MONEY' : direction;
+      const cpName = counterparty ? counterparty.name : 'N/A';
+      const cpEmail = counterparty ? counterparty.email : 'N/A';
+      
+      const dateStr = new Date(tx.createdAt).toISOString();
+      const desc = tx.description ? tx.description.replace(/"/g, '""') : '';
+      
+      return [
+        `"${dateStr}"`,
+        `"${tx.transactionId}"`,
+        `"${typeStr}"`,
+        `"${cpName}"`,
+        `"${cpEmail}"`,
+        `"${tx.amount}"`,
+        `"${tx.status}"`,
+        `"${desc}"`
+      ].join(',');
+    });
+
+    const csvData = [headers.join(','), ...rows].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="transactions.csv"');
+    
+    return res.status(200).send(csvData);
+  } catch (error) {
+    logger.error('Export transactions error: %s', error.message);
+    return next(error);
+  }
+};
+
 module.exports = {
   getWalletBalance,
   transferMoney,
   getTransactionHistory,
   getWalletStats,
   getAnalytics,
-  searchUsers
+  searchUsers,
+  exportTransactions
 };

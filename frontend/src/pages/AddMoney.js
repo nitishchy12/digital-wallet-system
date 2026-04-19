@@ -23,14 +23,19 @@ const AddMoney = () => {
   const fetchPaymentMethods = async () => {
     try {
       const response = await api.get('/payment/methods');
-      const enabledMethods = (response.data.data.paymentMethods || []).filter((method) => method.enabled);
+      const enabledMethods = (response.data.data.paymentMethods || []).filter(
+        (m) => m.enabled
+      );
       setPaymentMethods(enabledMethods);
       if (enabledMethods.length > 0) {
         setSelectedMethod(enabledMethods[0].id);
       }
     } catch (error) {
+      // BUG-16 FIX: api.js interceptor already shows "Network error" or the
+      // server message — do NOT call toast.error() here again (double toast).
       console.error('Failed to fetch payment methods:', error);
-      toast.error('Failed to load payment methods');
+      // Show the "No payment methods" UI gracefully instead of crashing
+      setPaymentMethods([]);
     } finally {
       setLoadingMethods(false);
     }
@@ -51,7 +56,6 @@ const AddMoney = () => {
         resolve();
         return;
       }
-
       const script = document.createElement('script');
       script.src = 'https://checkout.razorpay.com/v1/checkout.js';
       script.onload = () => resolve();
@@ -79,7 +83,6 @@ const AddMoney = () => {
     }
 
     setIsLoading(true);
-
     const idempotencyKey = generateIdempotencyKey('add-money');
 
     try {
@@ -91,20 +94,20 @@ const AddMoney = () => {
           idempotencyKey
         },
         {
-          headers: {
-            'x-idempotency-key': idempotencyKey
-          }
+          headers: { 'x-idempotency-key': idempotencyKey }
         }
       );
 
       const { transaction, paymentData } = orderResponse.data.data;
 
+      // ── Mock payment — immediate success ────────────────────────────────
       if (selectedMethod === 'mock') {
         toast.success(orderResponse.data.message || 'Money added successfully!');
         navigate('/dashboard');
         return;
       }
 
+      // ── Razorpay flow ────────────────────────────────────────────────────
       if (selectedMethod === 'razorpay') {
         await loadRazorpayScript();
 
@@ -118,18 +121,17 @@ const AddMoney = () => {
           prefill: paymentData.prefill,
           handler: async (response) => {
             try {
-              await api.post('/payment/verify', {
+              const verifyRes = await api.post('/payment/verify', {
                 razorpay_order_id: response.razorpay_order_id,
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
                 transactionId: transaction._id
               });
-
-              toast.success('Money added successfully!');
+              toast.success(verifyRes.data.message || 'Money added successfully!');
               navigate('/dashboard');
-            } catch (error) {
-              console.error('Payment verification failed:', error);
-              toast.error(error.response?.data?.message || 'Payment verification failed');
+            } catch (verifyError) {
+              // api.js interceptor shows the error toast — no duplicate here
+              console.error('Payment verification failed:', verifyError);
             } finally {
               setIsLoading(false);
             }
@@ -140,9 +142,7 @@ const AddMoney = () => {
               toast.error('Payment cancelled');
             }
           },
-          theme: {
-            color: '#0ea5e9'
-          }
+          theme: { color: '#0ea5e9' }
         };
 
         const razorpay = new window.Razorpay(options);
@@ -153,8 +153,9 @@ const AddMoney = () => {
       toast.error('Selected payment method is not supported yet');
       setIsLoading(false);
     } catch (error) {
+      // BUG-16 FIX: api.js interceptor already toasted the error.
+      // Only handle the loading state reset here.
       console.error('Payment initiation failed:', error);
-      toast.error(error.response?.data?.message || 'Failed to initiate payment');
       setIsLoading(false);
     }
   };
@@ -183,8 +184,11 @@ const AddMoney = () => {
 
       <div className="card">
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Amount Input */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Enter Amount</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Enter Amount
+            </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <FiDollarSign className="h-5 w-5 text-gray-400" />
@@ -199,12 +203,17 @@ const AddMoney = () => {
               />
             </div>
             {amount && (
-              <p className="mt-2 text-sm text-gray-600">Amount: Rs {parseInt(amount, 10).toLocaleString('en-IN')}</p>
+              <p className="mt-2 text-sm text-gray-600">
+                Amount: Rs {parseInt(amount, 10).toLocaleString('en-IN')}
+              </p>
             )}
           </div>
 
+          {/* Quick Select */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">Quick Select</label>
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Quick Select
+            </label>
             <div className="grid grid-cols-3 gap-3">
               {quickAmounts.map((quickAmount) => (
                 <button
@@ -223,13 +232,25 @@ const AddMoney = () => {
             </div>
           </div>
 
+          {/* Payment Method */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">Payment Method</label>
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Payment Method
+            </label>
             {paymentMethods.length === 0 ? (
               <div className="text-center py-8">
                 <FiCreditCard className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-500">No payment methods available</p>
-                <p className="text-sm text-gray-400">Please configure payment gateway keys</p>
+                <p className="text-sm text-gray-400">
+                  Please configure payment gateway keys in backend .env
+                </p>
+                <button
+                  type="button"
+                  onClick={fetchPaymentMethods}
+                  className="mt-3 text-sm text-primary-600 hover:text-primary-700 font-medium"
+                >
+                  Retry
+                </button>
               </div>
             ) : (
               <div className="space-y-3">
@@ -257,6 +278,9 @@ const AddMoney = () => {
                         <p className="text-sm text-gray-500">{method.description}</p>
                       </div>
                     </div>
+                    {selectedMethod === method.id && (
+                      <div className="h-4 w-4 rounded-full bg-primary-600 ml-2" />
+                    )}
                   </label>
                 ))}
               </div>

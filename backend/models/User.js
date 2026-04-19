@@ -56,6 +56,19 @@ const UserSchema = new mongoose.Schema(
 
 UserSchema.index({ createdAt: -1 });
 
+// Strip sensitive fields from every API response automatically
+UserSchema.set('toJSON', {
+  transform: function (doc, ret) {
+    delete ret.password;
+    delete ret.refreshTokenHash;
+    delete ret.verificationOTP;
+    delete ret.otpExpiry;
+    delete ret.resetPasswordToken;
+    delete ret.resetPasswordExpire;
+    return ret;
+  }
+});
+
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
   this.password = await bcrypt.hash(this.password, 10);

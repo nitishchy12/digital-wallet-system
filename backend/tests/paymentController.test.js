@@ -28,6 +28,7 @@ jest.mock('../models/Wallet', () => ({
 }));
 
 jest.mock('../models/Transaction', () => ({
+  create: jest.fn(),
   findOne: jest.fn(),
   updateOne: jest.fn(),
   findById: jest.fn()
@@ -40,7 +41,7 @@ jest.mock('../models/PaymentWebhookEvent', () => ({
 const crypto = require('crypto');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
-const { verifyPayment } = require('../controllers/paymentController');
+const { createPaymentOrder, verifyPayment } = require('../controllers/paymentController');
 
 const makeRes = () => {
   const res = {};
@@ -142,6 +143,65 @@ describe('paymentController verifyPayment', () => {
       expect.objectContaining({
         success: true,
         message: 'Payment verified and wallet updated successfully'
+      })
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('paymentController createPaymentOrder', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('retries mock add money without transaction when standalone MongoDB rejects session writes', async () => {
+    Transaction.findOne.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        select: jest.fn().mockResolvedValue(null)
+      })
+    });
+
+    Wallet.updateOne
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Transaction numbers are only allowed on a replica set member or mongos'), {
+          code: 20,
+          codeName: 'IllegalOperation'
+        })
+      )
+      .mockResolvedValueOnce({ acknowledged: true });
+
+    Wallet.findOne.mockResolvedValue({ balance: 500 });
+
+    Transaction.create.mockResolvedValue([
+      {
+        toObject: () => ({ _id: 'tx-mock-1', amount: 500, status: 'SUCCESS' })
+      }
+    ]);
+
+    const req = {
+      user: { _id: 'user-1' },
+      body: {
+        amount: 500,
+        paymentGateway: 'MOCK',
+        idempotencyKey: 'mock-key'
+      },
+      headers: {
+        'x-idempotency-key': 'mock-key'
+      }
+    };
+
+    const res = makeRes();
+    const next = jest.fn();
+
+    await createPaymentOrder(req, res, next);
+
+    expect(Wallet.updateOne).toHaveBeenCalledTimes(3);
+    expect(Transaction.create).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        message: 'Rs 500 added to wallet successfully (Mock)'
       })
     );
     expect(next).not.toHaveBeenCalled();

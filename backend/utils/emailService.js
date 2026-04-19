@@ -1,23 +1,40 @@
 const nodemailer = require('nodemailer');
 const logger = require('./logger');
 
-const createTransporter = () =>
-  nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: Number(process.env.EMAIL_PORT) || 587,
-    secure: false,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
+// BUG-14: Singleton transporter — one SMTP connection pool shared across all emails.
+// Previously a new transporter was created on every call (inefficient + no pooling).
+let _transporter = null;
+
+const getTransporter = () => {
+  if (_transporter) return _transporter;
+
+  const host = (process.env.EMAIL_HOST || 'smtp.gmail.com').trim();
+  const port = Number(process.env.EMAIL_PORT) || 587;
+  const user = (process.env.EMAIL_USER || '').trim();
+  const pass = (process.env.EMAIL_PASS || '').replace(/\s+/g, '');
+
+  _transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+    // Keep alive so we don't reconnect on every email
+    pool: true,
+    maxConnections: 5,
+    maxMessages: 100
   });
+
+  logger.info('Email transporter initialised (host=%s, port=%s)', host, port);
+  return _transporter;
+};
+
+const getSender = () => (process.env.EMAIL_USER || '').trim();
 
 const sendOTPEmail = async (email, otp, name) => {
   try {
-    const transporter = createTransporter();
-
+    const transporter = getTransporter();
     const info = await transporter.sendMail({
-      from: `"Digital Wallet" <${process.env.EMAIL_USER}>`,
+      from: `"Digital Wallet" <${getSender()}>`,
       to: email,
       subject: 'Verify Your Digital Wallet Account',
       html: `
@@ -34,18 +51,23 @@ const sendOTPEmail = async (email, otp, name) => {
     logger.info('OTP email sent: %s', info.messageId);
     return info;
   } catch (error) {
-    logger.error('OTP email error: %s', error.message);
+    logger.error(
+      'OTP email error: %s | code=%s | response=%s',
+      error.message,
+      error.code || 'unknown',
+      error.response || 'n/a'
+    );
     throw new Error('OTP email failed');
   }
 };
 
 const sendTransactionEmail = async (email, name, transactionData) => {
   try {
-    const transporter = createTransporter();
+    const transporter = getTransporter();
     const directionLabel = transactionData.direction === 'RECEIVED' ? 'credited to' : 'debited from';
 
     await transporter.sendMail({
-      from: `"Digital Wallet" <${process.env.EMAIL_USER}>`,
+      from: `"Digital Wallet" <${getSender()}>`,
       to: email,
       subject: 'Transaction Alert - Digital Wallet',
       html: `
@@ -71,9 +93,9 @@ const sendTransactionEmail = async (email, name, transactionData) => {
 
 const sendWelcomeEmail = async (email, name) => {
   try {
-    const transporter = createTransporter();
+    const transporter = getTransporter();
     await transporter.sendMail({
-      from: `"Digital Wallet" <${process.env.EMAIL_USER}>`,
+      from: `"Digital Wallet" <${getSender()}>`,
       to: email,
       subject: 'Welcome to Digital Wallet',
       html: `<h2>Welcome ${name}!</h2><p>Your account is verified.</p>`
@@ -85,9 +107,9 @@ const sendWelcomeEmail = async (email, name) => {
 
 const sendResetPasswordEmail = async (email, name, resetLink) => {
   try {
-    const transporter = createTransporter();
+    const transporter = getTransporter();
     await transporter.sendMail({
-      from: `"Digital Wallet" <${process.env.EMAIL_USER}>`,
+      from: `"Digital Wallet" <${getSender()}>`,
       to: email,
       subject: 'Reset Your Digital Wallet Password',
       html: `

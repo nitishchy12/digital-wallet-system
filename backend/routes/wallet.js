@@ -6,7 +6,8 @@ const {
   getTransactionHistory,
   getWalletStats,
   getAnalytics,
-  searchUsers
+  searchUsers,
+  exportTransactions
 } = require('../controllers/walletController');
 const { validateTransfer, validatePagination, validateDateRangeFilters } = require('../middleware/validation');
 const { authenticateToken, requireVerified } = require('../middleware/auth');
@@ -17,6 +18,7 @@ router.get('/balance', getWalletBalance);
 router.get('/stats', getWalletStats);
 router.get('/analytics', getAnalytics);
 router.post('/transfer', validateTransfer, transferMoney);
+router.get('/transactions/export', validateDateRangeFilters, exportTransactions);
 router.get('/transactions', validatePagination, validateDateRangeFilters, getTransactionHistory);
 router.get('/search-users', searchUsers);
 

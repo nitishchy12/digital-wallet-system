@@ -35,25 +35,101 @@ const verifyRazorpaySignature = (payload, signature, secret) => {
   return crypto.timingSafeEqual(Buffer.from(expectedSignature), Buffer.from(signature));
 };
 
-const createMockAddMoneyTransaction = async ({ userId, amount, paymentGateway, idempotencyKey }) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+const isTransactionUnsupportedError = (err) =>
+  Boolean(
+    err &&
+      (err.codeName === 'IllegalOperation' ||
+        err.code === 20 ||
+        err.code === 51 ||
+        /transaction numbers are only allowed on a replica set member or mongos/i.test(err.message) ||
+        /transaction/i.test(err.message))
+  );
+
+// ---------------------------------------------------------------------------
+// Safe session/transaction helpers — work on standalone MongoDB too
+// ---------------------------------------------------------------------------
+const startSessionSafe = async () => {
+  try {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    return { session, useTransaction: true };
+  } catch (err) {
+    const isNoReplicaSet =
+      err.codeName === 'IllegalOperation' ||
+      err.code === 20 ||
+      err.code === 51 ||
+      /transaction/i.test(err.message);
+
+    if (isNoReplicaSet) {
+      logger.warn('MongoDB transactions not supported (payment) — falling back to non-transactional mode');
+      return { session: null, useTransaction: false };
+    }
+    throw err;
+  }
+};
+
+const commitSafe = async (session, useTransaction) => {
+  if (useTransaction && session) {
+    await session.commitTransaction();
+    session.endSession();
+  }
+};
+
+const abortSafe = async (session, useTransaction) => {
+  if (!useTransaction || !session) return;
+  try {
+    await session.abortTransaction();
+  } catch (_) {
+    // ignore
+  } finally {
+    try {
+      session.endSession();
+    } catch (_) {
+      // ignore
+    }
+  }
+};
+
+const sessionOpt = (session, useTransaction) =>
+  useTransaction && session ? { session } : {};
+
+const ensureWalletExists = async (userId, session, useTransaction) => {
+  await Wallet.updateOne(
+    { userId },
+    {
+      $setOnInsert: {
+        userId,
+        currency: 'INR',
+        balance: 0
+      }
+    },
+    { upsert: true, ...sessionOpt(session, useTransaction) }
+  );
+};
+
+// ---------------------------------------------------------------------------
+
+const createMockAddMoneyTransaction = async (
+  { userId, amount, paymentGateway, idempotencyKey },
+  options = {}
+) => {
+  const retryWithoutTransaction = options.retryWithoutTransaction !== false;
+  const forceNoTransaction = options.forceNoTransaction === true;
+  const { session, useTransaction } = forceNoTransaction
+    ? { session: null, useTransaction: false }
+    : await startSessionSafe();
 
   try {
+    await ensureWalletExists(userId, session, useTransaction);
+
     await Wallet.updateOne(
       { userId },
-      {
-        $setOnInsert: {
-          userId,
-          currency: 'INR',
-          balance: 0
-        },
-        $inc: { balance: amount }
-      },
-      { upsert: true, session }
+      { $inc: { balance: amount } },
+      sessionOpt(session, useTransaction)
     );
 
-    const wallet = await Wallet.findOne({ userId }).session(session);
+    const walletQuery = Wallet.findOne({ userId });
+    const wallet = useTransaction && session ? await walletQuery.session(session) : await walletQuery;
 
     const [transaction] = await Transaction.create(
       [
@@ -73,17 +149,24 @@ const createMockAddMoneyTransaction = async ({ userId, amount, paymentGateway, i
           }
         }
       ],
-      { session }
+      sessionOpt(session, useTransaction)
     );
 
-    await session.commitTransaction();
+    await commitSafe(session, useTransaction);
 
     return { transaction, walletBalance: wallet.balance };
   } catch (error) {
-    await session.abortTransaction();
+    await abortSafe(session, useTransaction);
+
+    if (useTransaction && retryWithoutTransaction && isTransactionUnsupportedError(error)) {
+      logger.warn('Mock add money falling back to non-transactional mode after MongoDB rejected the transaction');
+      return createMockAddMoneyTransaction(
+        { userId, amount, paymentGateway, idempotencyKey },
+        { retryWithoutTransaction: false, forceNoTransaction: true }
+      );
+    }
+
     throw error;
-  } finally {
-    session.endSession();
   }
 };
 
@@ -231,12 +314,14 @@ const createPaymentOrder = async (req, res, next) => {
 };
 
 const verifyPayment = async (req, res, next) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  let session = null;
+  let useTransaction = false;
 
   try {
+    ({ session, useTransaction } = await startSessionSafe());
+
     if (!hasRazorpayConfig) {
-      await session.abortTransaction();
+      await abortSafe(session, useTransaction);
       return res.status(503).json({
         success: false,
         message: 'Razorpay is not configured on server'
@@ -252,14 +337,16 @@ const verifyPayment = async (req, res, next) => {
 
     const userId = req.user._id;
 
-    const transaction = await Transaction.findOne({
+    const transactionQuery = Transaction.findOne({
       _id: transactionId,
       receiverId: userId,
       paymentGateway: 'RAZORPAY'
-    }).session(session);
+    });
+    const transaction =
+      useTransaction && session ? await transactionQuery.session(session) : await transactionQuery;
 
     if (!transaction) {
-      await session.abortTransaction();
+      await abortSafe(session, useTransaction);
       return res.status(404).json({
         success: false,
         message: 'Payment transaction not found'
@@ -267,7 +354,7 @@ const verifyPayment = async (req, res, next) => {
     }
 
     if (transaction.status === 'SUCCESS') {
-      await session.abortTransaction();
+      await abortSafe(session, useTransaction);
       const wallet = await Wallet.findOne({ userId }).select('balance').lean();
 
       return res.status(200).json({
@@ -281,7 +368,7 @@ const verifyPayment = async (req, res, next) => {
     }
 
     if (transaction.gatewayOrderId !== razorpayOrderId) {
-      await session.abortTransaction();
+      await abortSafe(session, useTransaction);
       return res.status(400).json({
         success: false,
         message: 'Order id mismatch'
@@ -305,9 +392,9 @@ const verifyPayment = async (req, res, next) => {
             }
           }
         },
-        { session }
+        sessionOpt(session, useTransaction)
       );
-      await session.commitTransaction();
+      await commitSafe(session, useTransaction);
 
       return res.status(400).json({
         success: false,
@@ -317,48 +404,42 @@ const verifyPayment = async (req, res, next) => {
 
     await Wallet.updateOne(
       { userId },
-      {
-        $setOnInsert: {
-          userId,
-          currency: 'INR',
-          balance: 0
-        },
-        $inc: { balance: transaction.amount }
-      },
-      { upsert: true, session }
+      { $setOnInsert: { userId, currency: 'INR', balance: 0 } },
+      { upsert: true, ...sessionOpt(session, useTransaction) }
     );
 
-    const wallet = await Wallet.findOne({ userId }).session(session);
+    await Wallet.updateOne(
+      { userId },
+      { $inc: { balance: transaction.amount } },
+      sessionOpt(session, useTransaction)
+    );
+
+    const walletQuery = Wallet.findOne({ userId });
+    const wallet = useTransaction && session ? await walletQuery.session(session) : await walletQuery;
 
     const transactionUpdateResult = await Transaction.updateOne(
-      {
-        _id: transaction._id,
-        status: 'PENDING'
-      },
+      { _id: transaction._id, status: 'PENDING' },
       {
         $set: {
           status: 'SUCCESS',
           processedAt: new Date(),
           gatewayPaymentId: razorpayPaymentId,
           gatewaySignature: razorpaySignature,
-          balanceSnapshot: {
-            receiverBalance: wallet.balance
-          }
+          balanceSnapshot: { receiverBalance: wallet.balance }
         }
       },
-      { session }
+      sessionOpt(session, useTransaction)
     );
 
     if (transactionUpdateResult.modifiedCount !== 1) {
-      await session.abortTransaction();
-
+      await abortSafe(session, useTransaction);
       return res.status(409).json({
         success: false,
         message: 'Payment already processed'
       });
     }
 
-    await session.commitTransaction();
+    await commitSafe(session, useTransaction);
 
     const updatedTransaction = await Transaction.findById(transaction._id);
 
@@ -379,11 +460,9 @@ const verifyPayment = async (req, res, next) => {
       }
     });
   } catch (error) {
-    await session.abortTransaction();
     logger.error('Verify payment error: %s', error.message);
+    await abortSafe(session, useTransaction);
     return next(error);
-  } finally {
-    session.endSession();
   }
 };
 
@@ -420,10 +499,7 @@ const handleWebhook = async (req, res) => {
           eventId,
           eventType: eventType || 'unknown',
           status: 'RECEIVED',
-          payloadMeta: {
-            orderId,
-            paymentId
-          }
+          payloadMeta: { orderId, paymentId }
         }
       },
       { upsert: true }
@@ -435,10 +511,7 @@ const handleWebhook = async (req, res) => {
         { $set: { status: 'DUPLICATE', processedAt: new Date(), reason: 'Already processed' } }
       );
 
-      return res.status(200).json({
-        success: true,
-        message: 'Duplicate webhook ignored'
-      });
+      return res.status(200).json({ success: true, message: 'Duplicate webhook ignored' });
     }
 
     if (eventType !== 'payment.captured') {
@@ -447,10 +520,7 @@ const handleWebhook = async (req, res) => {
         { $set: { status: 'SKIPPED', processedAt: new Date(), reason: `Unhandled event ${eventType}` } }
       );
 
-      return res.status(200).json({
-        success: true,
-        message: 'Webhook event skipped'
-      });
+      return res.status(200).json({ success: true, message: 'Webhook event skipped' });
     }
 
     const transaction = await Transaction.findOne({
@@ -464,10 +534,7 @@ const handleWebhook = async (req, res) => {
         { $set: { status: 'ORPHAN', processedAt: new Date(), reason: 'Transaction not found' } }
       );
 
-      return res.status(200).json({
-        success: true,
-        message: 'Webhook recorded; transaction not found'
-      });
+      return res.status(200).json({ success: true, message: 'Webhook recorded; transaction not found' });
     }
 
     if (transaction.status === 'SUCCESS') {
@@ -483,14 +550,10 @@ const handleWebhook = async (req, res) => {
         }
       );
 
-      return res.status(200).json({
-        success: true,
-        message: 'Webhook acknowledged; transaction already processed'
-      });
+      return res.status(200).json({ success: true, message: 'Webhook acknowledged; transaction already processed' });
     }
 
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const { session, useTransaction } = await startSessionSafe();
 
     try {
       const transactionUpdate = await Transaction.updateOne(
@@ -507,11 +570,11 @@ const handleWebhook = async (req, res) => {
             }
           }
         },
-        { session }
+        sessionOpt(session, useTransaction)
       );
 
       if (transactionUpdate.modifiedCount !== 1) {
-        await session.abortTransaction();
+        await abortSafe(session, useTransaction);
 
         await PaymentWebhookEvent.updateOne(
           { eventId },
@@ -525,50 +588,34 @@ const handleWebhook = async (req, res) => {
           }
         );
 
-        return res.status(200).json({
-          success: true,
-          message: 'Webhook acknowledged; already processed'
-        });
+        return res.status(200).json({ success: true, message: 'Webhook acknowledged; already processed' });
       }
 
       await Wallet.updateOne(
         { userId: transaction.receiverId },
-        {
-          $setOnInsert: {
-            userId: transaction.receiverId,
-            currency: 'INR',
-            balance: 0
-          },
-          $inc: { balance: transaction.amount }
-        },
-        { upsert: true, session }
+        { $setOnInsert: { userId: transaction.receiverId, currency: 'INR', balance: 0 } },
+        { upsert: true, ...sessionOpt(session, useTransaction) }
       );
 
-      const wallet = await Wallet.findOne({ userId: transaction.receiverId }).session(session);
+      await Wallet.updateOne(
+        { userId: transaction.receiverId },
+        { $inc: { balance: transaction.amount } },
+        sessionOpt(session, useTransaction)
+      );
+
+      const wallet = await Wallet.findOne({ userId: transaction.receiverId });
 
       await Transaction.updateOne(
         { _id: transaction._id },
-        {
-          $set: {
-            balanceSnapshot: {
-              receiverBalance: wallet.balance
-            }
-          }
-        },
-        { session }
+        { $set: { balanceSnapshot: { receiverBalance: wallet.balance } } },
+        sessionOpt(session, useTransaction)
       );
 
-      await session.commitTransaction();
+      await commitSafe(session, useTransaction);
 
       await PaymentWebhookEvent.updateOne(
         { eventId },
-        {
-          $set: {
-            status: 'PROCESSED',
-            processedAt: new Date(),
-            transactionId: transaction._id
-          }
-        }
+        { $set: { status: 'PROCESSED', processedAt: new Date(), transactionId: transaction._id } }
       );
 
       if (global.io) {
@@ -580,12 +627,9 @@ const handleWebhook = async (req, res) => {
         });
       }
 
-      return res.status(200).json({
-        success: true,
-        message: 'Webhook processed successfully'
-      });
+      return res.status(200).json({ success: true, message: 'Webhook processed successfully' });
     } catch (error) {
-      await session.abortTransaction();
+      await abortSafe(session, useTransaction);
       await PaymentWebhookEvent.updateOne(
         { eventId },
         {
@@ -598,8 +642,6 @@ const handleWebhook = async (req, res) => {
         }
       );
       throw error;
-    } finally {
-      session.endSession();
     }
   } catch (error) {
     logger.error('Razorpay webhook error: %s', error.message);
@@ -622,7 +664,9 @@ const getPaymentMethods = async (req, res, next) => {
       {
         id: 'razorpay',
         name: 'Razorpay',
-        description: hasRazorpayConfig ? 'UPI, Cards, NetBanking, Wallets' : 'Configure Razorpay keys in backend .env',
+        description: hasRazorpayConfig
+          ? 'UPI, Cards, NetBanking, Wallets'
+          : 'Configure Razorpay keys in backend .env',
         enabled: hasRazorpayConfig
       }
     ];

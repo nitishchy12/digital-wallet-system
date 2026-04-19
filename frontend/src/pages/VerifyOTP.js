@@ -12,11 +12,16 @@ const VerifyOTP = () => {
   const [canResend, setCanResend] = useState(false);
   
   const inputRefs = useRef([]);
+  // BUG-18 FIX: track the countdown interval in a ref so we can clear it
+  // before starting a new one (prevents double-speed timer on resend).
+  const timerRef = useRef(null);
+
   const { verifyOTP, resendOTP, isAuthenticated, loading, requiresVerification, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   
-  const email = location.state?.email || user?.email || '';
+  const queryEmail = new URLSearchParams(location.search).get('email');
+  const email = location.state?.email || queryEmail || user?.email || '';
 
   useEffect(() => {
     if (isAuthenticated && !loading && !requiresVerification) {
@@ -24,26 +29,47 @@ const VerifyOTP = () => {
     }
   }, [isAuthenticated, loading, navigate, requiresVerification]);
 
+  // Helper: start the countdown from a given number of seconds
+  const startCountdown = (seconds) => {
+    // Clear any existing interval before starting a new one
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    setTimer(seconds);
+    setCanResend(false);
+
+    timerRef.current = setInterval(() => {
+      setTimer((prev) => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+          setCanResend(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
   useEffect(() => {
     if (!email) {
       navigate('/signup');
       return;
     }
 
-    // Start countdown timer
-    const interval = setInterval(() => {
-      setTimer(prev => {
-        if (prev <= 1) {
-          setCanResend(true);
-          clearInterval(interval);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    startCountdown(60);
 
-    return () => clearInterval(interval);
-  }, [email, navigate]);
+    // Cleanup on unmount
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email]);
 
   const handleOtpChange = (index, value) => {
     if (value.length > 1) return;
@@ -71,7 +97,7 @@ const VerifyOTP = () => {
     setOtp(newOtp);
     
     // Focus the last filled input or the first empty one
-    const lastFilledIndex = newOtp.findIndex(digit => !digit);
+    const lastFilledIndex = newOtp.findIndex((digit) => !digit);
     const focusIndex = lastFilledIndex === -1 ? 5 : Math.max(0, lastFilledIndex - 1);
     inputRefs.current[focusIndex]?.focus();
   };
@@ -91,6 +117,8 @@ const VerifyOTP = () => {
       const result = await verifyOTP(email, otpString);
       if (result.success) {
         navigate('/dashboard');
+      } else {
+        toast.error(result.message || 'OTP verification failed');
       }
     } catch (error) {
       console.error('OTP verification error:', error);
@@ -106,20 +134,10 @@ const VerifyOTP = () => {
       const result = await resendOTP(email);
       if (result.success) {
         setOtp(['', '', '', '', '', '']);
-        setTimer(60);
-        setCanResend(false);
-        
-        // Restart timer
-        const interval = setInterval(() => {
-          setTimer(prev => {
-            if (prev <= 1) {
-              setCanResend(true);
-              clearInterval(interval);
-              return 0;
-            }
-            return prev - 1;
-          });
-        }, 1000);
+        // BUG-18 FIX: use startCountdown which always clears the old interval first
+        startCountdown(60);
+      } else {
+        toast.error(result.message || 'Failed to resend OTP');
       }
     } catch (error) {
       console.error('Resend OTP error:', error);
@@ -163,7 +181,7 @@ const VerifyOTP = () => {
               {otp.map((digit, index) => (
                 <input
                   key={index}
-                  ref={el => inputRefs.current[index] = el}
+                  ref={(el) => (inputRefs.current[index] = el)}
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"

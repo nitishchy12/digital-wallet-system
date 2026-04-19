@@ -66,14 +66,12 @@ describe('walletController', () => {
 
   test('transferMoney aborts when sender balance is insufficient', async () => {
     User.findOne.mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        session: jest.fn().mockResolvedValue({
-          _id: 'receiver-1',
-          name: 'Receiver',
-          email: 'receiver@example.com',
-          isVerified: true,
-          isActive: true
-        })
+      select: jest.fn().mockResolvedValue({
+        _id: 'receiver-1',
+        name: 'Receiver',
+        email: 'receiver@example.com',
+        isVerified: true,
+        isActive: true
       })
     });
 

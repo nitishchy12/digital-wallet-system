@@ -31,6 +31,14 @@ const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString()
 
 const hashOTP = (otp) => crypto.createHash('sha256').update(String(otp)).digest('hex');
 
+const issueVerificationOTP = async (user) => {
+  const otp = generateOTP();
+  user.verificationOTP = hashOTP(otp);
+  user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+  await user.save();
+  await sendOTPEmail(user.email, otp, user.name);
+};
+
 const register = async (req, res, next) => {
   try {
     const { name, email, phone, password } = req.body;
@@ -46,15 +54,13 @@ const register = async (req, res, next) => {
       });
     }
 
-    const otp = generateOTP();
-
     const user = new User({
       name,
       email,
       phone,
       password,
-      verificationOTP: hashOTP(otp),
-      otpExpiry: new Date(Date.now() + 10 * 60 * 1000)
+      verificationOTP: null,
+      otpExpiry: null
     });
 
     await user.save();
@@ -63,7 +69,7 @@ const register = async (req, res, next) => {
     user.qrCode = await generateQRCode(JSON.stringify(qrData));
     await user.save();
 
-    await sendOTPEmail(email, otp, name);
+    await issueVerificationOTP(user);
 
     return res.status(201).json({
       success: true,
@@ -162,12 +168,7 @@ const resendOTP = async (req, res, next) => {
       });
     }
 
-    const otp = generateOTP();
-    user.verificationOTP = hashOTP(otp);
-    user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
-
-    await user.save();
-    await sendOTPEmail(email, otp, user.name);
+    await issueVerificationOTP(user);
 
     return res.status(200).json({
       success: true,
@@ -206,6 +207,22 @@ const login = async (req, res, next) => {
       });
     }
 
+    // Unverified user: send a new OTP and return WITHOUT issuing wallet-capable tokens.
+    // The frontend must redirect to /verify-otp where the user gets proper tokens.
+    if (!user.isVerified) {
+      await issueVerificationOTP(user);
+      await user.save();
+
+      return res.status(200).json({
+        success: true,
+        message: 'OTP sent to your email. Please verify your account.',
+        data: {
+          requiresVerification: true,
+          user: { email: user.email, name: user.name, isVerified: false }
+        }
+      });
+    }
+
     const { accessToken, refreshToken } = generateTokens(user._id);
     user.refreshTokenHash = hashRefreshToken(refreshToken);
     user.refreshToken = null;
@@ -220,7 +237,7 @@ const login = async (req, res, next) => {
         user: user.toJSON(),
         accessToken,
         refreshToken,
-        requiresVerification: !user.isVerified
+        requiresVerification: false
       }
     });
   } catch (error) {

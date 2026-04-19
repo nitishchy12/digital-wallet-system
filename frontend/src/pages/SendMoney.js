@@ -34,7 +34,9 @@ const SendMoney = () => {
     
     setIsSearching(true);
     try {
-      const response = await api.get(`/wallet/search-users?query=${encodeURIComponent(searchQuery)}`);
+      const response = await api.get(`/wallet/search-users?query=${encodeURIComponent(searchQuery)}`, {
+        skipErrorToast: true
+      });
       setSearchResults(response.data.data.users);
     } catch (error) {
       console.error('User search failed:', error);
@@ -122,7 +124,8 @@ const SendMoney = () => {
         {
           headers: {
             'x-idempotency-key': idempotencyKey
-          }
+          },
+          skipErrorToast: true
         }
       );
 

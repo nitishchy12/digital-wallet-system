@@ -11,7 +11,16 @@ const initialState = {
   token: localStorage.getItem('accessToken'),
   isAuthenticated: false,
   loading: true,
-  requiresVerification: localStorage.getItem('requiresVerification') === 'true'
+  requiresVerification:
+    localStorage.getItem('requiresVerification') === 'true' ||
+    (() => {
+      try {
+        const savedUser = JSON.parse(localStorage.getItem('user') || 'null');
+        return Boolean(savedUser && savedUser.isVerified === false);
+      } catch (error) {
+        return false;
+      }
+    })()
 };
 
 /* ================= REDUCER ================= */
@@ -21,13 +30,21 @@ const authReducer = (state, action) => {
     case 'SET_LOADING':
       return { ...state, loading: action.payload };
 
-    case 'LOGIN_SUCCESS':
+    case 'LOGIN_SUCCESS': {
+      const requiresVerification =
+        action.payload.requiresVerification !== undefined
+          ? Boolean(action.payload.requiresVerification)
+          : Boolean(action.payload.user?.isVerified === false);
+
+      // BUG-10 FIX: persist both access token AND refresh token so the
+      // Axios interceptor can silently refresh on 401 instead of force-logout.
       localStorage.setItem('accessToken', action.payload.accessToken);
       localStorage.setItem('user', JSON.stringify(action.payload.user));
-      localStorage.setItem(
-        'requiresVerification',
-        String(Boolean(action.payload.requiresVerification))
-      );
+      localStorage.setItem('requiresVerification', String(requiresVerification));
+
+      if (action.payload.refreshToken) {
+        localStorage.setItem('refreshToken', action.payload.refreshToken);
+      }
 
       return {
         ...state,
@@ -35,11 +52,44 @@ const authReducer = (state, action) => {
         token: action.payload.accessToken,
         isAuthenticated: true,
         loading: false,
-        requiresVerification: Boolean(action.payload.requiresVerification)
+        requiresVerification
       };
+    }
+
+    case 'REQUIRES_VERIFICATION': {
+      const pendingUser = action.payload?.user || null;
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.setItem('requiresVerification', 'true');
+
+      if (pendingUser) {
+        localStorage.setItem('user', JSON.stringify(pendingUser));
+      }
+
+      return {
+        ...state,
+        user: pendingUser,
+        token: null,
+        isAuthenticated: false,
+        loading: false,
+        requiresVerification: true
+      };
+    }
+
+    case 'TOKEN_REFRESHED': {
+      localStorage.setItem('accessToken', action.payload.accessToken);
+      if (action.payload.refreshToken) {
+        localStorage.setItem('refreshToken', action.payload.refreshToken);
+      }
+      return {
+        ...state,
+        token: action.payload.accessToken
+      };
+    }
 
     case 'LOGOUT':
       localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');   // BUG-10 FIX: clear on logout
       localStorage.removeItem('user');
       localStorage.removeItem('requiresVerification');
 
@@ -76,16 +126,33 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const token = localStorage.getItem('accessToken');
     const savedUser = localStorage.getItem('user');
-    const requiresVerification = localStorage.getItem('requiresVerification') === 'true';
+    let parsedUser = null;
 
-    if (token && savedUser) {
+    if (savedUser) {
+      try {
+        parsedUser = JSON.parse(savedUser);
+      } catch (error) {
+        localStorage.removeItem('user');
+      }
+    }
+
+    const requiresVerification =
+      localStorage.getItem('requiresVerification') === 'true' ||
+      Boolean(parsedUser && parsedUser.isVerified === false);
+
+    if (token && parsedUser) {
       dispatch({
         type: 'LOGIN_SUCCESS',
         payload: {
           accessToken: token,
-          user: JSON.parse(savedUser),
+          user: parsedUser,
           requiresVerification
         }
+      });
+    } else if (requiresVerification && parsedUser) {
+      dispatch({
+        type: 'REQUIRES_VERIFICATION',
+        payload: { user: parsedUser }
       });
     } else {
       dispatch({ type: 'SET_LOADING', payload: false });
@@ -99,23 +166,37 @@ export const AuthProvider = ({ children }) => {
       dispatch({ type: 'SET_LOADING', payload: true });
 
       const response = await api.post('/auth/login', { email, password });
+      const data = response.data.data;
+
+      // BUG-05: If unverified, server returns no tokens — persist the pending
+      // verification state so refresh/route guards keep the user on OTP flow.
+      if (data.requiresVerification) {
+        dispatch({
+          type: 'REQUIRES_VERIFICATION',
+          payload: { user: data.user }
+        });
+        return {
+          success: true,
+          requiresVerification: true,
+          user: data.user
+        };
+      }
 
       dispatch({
         type: 'LOGIN_SUCCESS',
-        payload: response.data.data
+        payload: data
       });
 
       toast.success('Login successful!');
       return {
         success: true,
-        requiresVerification: Boolean(response.data.data.requiresVerification),
-        user: response.data.data.user
+        requiresVerification: false,
+        user: data.user
       };
 
     } catch (error) {
       dispatch({ type: 'SET_LOADING', payload: false });
       const message = error.response?.data?.message || 'Login failed';
-      toast.error(message);
       return { success: false, message };
     }
   };
@@ -136,7 +217,6 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       dispatch({ type: 'SET_LOADING', payload: false });
       const message = error.response?.data?.message || 'Registration failed';
-      toast.error(message);
       return { success: false, message };
     }
   };
@@ -160,7 +240,6 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       dispatch({ type: 'SET_LOADING', payload: false });
       const message = error.response?.data?.message || 'OTP verification failed';
-      toast.error(message);
       return { success: false, message };
     }
   };
@@ -174,7 +253,6 @@ export const AuthProvider = ({ children }) => {
       return { success: true };
     } catch (error) {
       const message = error.response?.data?.message || 'Failed to resend OTP';
-      toast.error(message);
       return { success: false, message };
     }
   };
@@ -202,7 +280,9 @@ export const AuthProvider = ({ children }) => {
     resendOTP,
     logout,
     updateUser: (data) =>
-      dispatch({ type: 'UPDATE_USER', payload: data })
+      dispatch({ type: 'UPDATE_USER', payload: data }),
+    // Expose for the Axios interceptor so it can dispatch TOKEN_REFRESHED without importing AuthContext
+    dispatchAuth: dispatch
   };
 
   return (

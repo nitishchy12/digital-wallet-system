@@ -52,8 +52,8 @@ const Dashboard = () => {
       setRecentTransactions(transactionsRes.data.data.transactions);
       setAnalytics(analyticsRes.data.data);
     } catch (error) {
+      // api.js interceptor already shows a toast for API errors
       console.error('Dashboard data fetch error:', error);
-      toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
       setRefreshing(false);

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { FiEye, FiEyeOff, FiMail, FiLock } from 'react-icons/fi';
+import toast from 'react-hot-toast';
 
 const Login = () => {
   const [formData, setFormData] = useState({
@@ -36,8 +37,12 @@ const Login = () => {
 
     try {
       const result = await login(formData.email, formData.password);
+
       if (result.success) {
         if (result.requiresVerification) {
+          // BUG-05: server no longer returns tokens for unverified users.
+          // Navigate to OTP page so the user can verify their email.
+          toast.success('OTP sent to your email. Please verify your account.');
           navigate('/verify-otp', {
             replace: true,
             state: { email: formData.email }
@@ -46,6 +51,7 @@ const Login = () => {
           navigate(from, { replace: true });
         }
       }
+      // API errors toasted by api.js interceptor (BUG-16 — no duplicate toast here)
     } catch (error) {
       console.error('Login error:', error);
     } finally {
@@ -171,7 +177,7 @@ const Login = () => {
 
           <div className="text-center">
             <p className="text-sm text-gray-600">
-              Demo Credentials: admin@example.com / password123
+              Demo Credentials: admin@example.com / Password123!
             </p>
           </div>
         </form>
