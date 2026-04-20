@@ -14,7 +14,12 @@ spec:
         app: wallet-backend
     spec:
       containers:
-      - name: backend
-        image: nitishchy12/wallet-backend:latest
-        ports:
-        - containerPort: 5000
+        - name: backend
+          image: nitishchy12/wallet-backend:latest
+          ports:
+            - containerPort: 5000
+          env:
+            - name: MONGO_URI
+              value: "mongodb://mongo:27017/wallet"
+            - name: RUNNING_IN_DOCKER
+              value: "true"
