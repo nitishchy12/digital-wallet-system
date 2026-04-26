@@ -469,7 +469,7 @@ Resources included:
 
 - Namespace: `wallet`
 - Backend ConfigMap: `backend-config`
-- Backend Secret: `backend-secrets`
+- Backend Secret: `backend-secret`
 - Backend Deployment and ClusterIP Service
 - Frontend Deployment and ClusterIP Service
 - MongoDB PersistentVolume
@@ -485,7 +485,15 @@ This deployment assumes:
 - Kubernetes was created with kubeadm on EC2 instances.
 - NGINX Ingress Controller is installed.
 - EC2 security groups allow inbound traffic to NodePort `30080`.
-- MongoDB local storage path exists or can be created at `/mnt/digital-wallet/mongo`.
+- MongoDB local storage path exists or can be created at `/data/mongo`.
+
+Required EC2 security group inbound rule for browser access:
+
+```text
+Type: Custom TCP
+Port: 30080
+Source: 0.0.0.0/0
+```
 
 Install NGINX Ingress Controller:
 
@@ -513,11 +521,13 @@ Update these files before production deployment:
 - `k8s/backend/secret.yaml`
 - `k8s/backend/configmap.yaml`
 
-Set `FRONTEND_URL` in `k8s/backend/configmap.yaml` to:
+Keep `FRONTEND_URL` in `k8s/backend/configmap.yaml` as:
 
 ```text
-http://<worker-node-public-ip>:30080
+/
 ```
+
+Ingress handles browser routing, so do not hard-code the worker node IP in `FRONTEND_URL`.
 
 Deploy the application:
 

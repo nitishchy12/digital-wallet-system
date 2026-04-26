@@ -75,7 +75,7 @@ spec:
           app.kubernetes.io/name: digital-wallet
           app.kubernetes.io/component: database
       spec:
-        storageClassName: mongo-local-storage
+        storageClassName: ""
         accessModes:
           - ReadWriteOnce
         resources:
