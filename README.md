@@ -1,455 +1,156 @@
 # Digital Wallet System
 
-Digital Wallet System is a full-stack MERN wallet application with a React frontend, Node.js/Express backend, MongoDB database, Docker support, and Kubernetes deployment manifests for a self-managed kubeadm cluster on AWS EC2.
+A production-style MERN fintech application with Kubernetes-based deployment and real-time wallet operations.
 
-The application supports user registration, OTP verification, JWT authentication, wallet balance management, money transfer, add-money flows, Razorpay integration, QR-based payment flows, transaction history, CSV export, admin APIs, and real-time wallet updates through Socket.IO.
+## About This Project
 
-## Current Deployment Target
+This is a full-stack digital wallet system I built to simulate real-world fintech architecture.
+The goal was to design a scalable, deployment-ready system using secure backend flows, real-time communication, Docker, and Kubernetes-based DevOps practices.
 
-This repository is currently configured for:
+This project is designed to simulate production-grade architecture and DevOps workflows. It is not a managed banking product, but it follows patterns commonly used in production systems such as token rotation, idempotency, ingress routing, persistent database storage, and infrastructure separation.
 
-- AWS EC2 instances
-- Self-managed Kubernetes cluster created with kubeadm
-- NGINX Ingress Controller
-- React frontend served by Nginx on port `80`
-- Node.js backend running on port `5000`
-- MongoDB running as a StatefulSet with persistent storage
-- Prometheus, Grafana, and Alertmanager installed with Helm
+Key focus areas:
 
-This setup does not use EKS, AWS ALB Ingress Controller, or AWS ALB annotations.
+- Distributed system design
+- Secure payment and wallet flows
+- Scalable infrastructure using Kubernetes
+- Real-time communication with Socket.IO
+- Monitoring-ready infrastructure using Prometheus and Grafana
 
-## Main Features
+## Deployment Status
 
-- User signup with OTP email verification
-- Login with JWT access token and refresh token
-- Refresh-token rotation with hashed refresh-token storage
-- Forgot-password and reset-password flow
-- Protected wallet routes for verified users only
-- Wallet balance view
-- Add money with mock payment mode or Razorpay
-- Razorpay order creation and payment signature verification
-- Razorpay webhook handling with duplicate-event protection
-- Wallet-to-wallet money transfer
-- Idempotency keys for add-money and transfer APIs
-- Transaction history with filters
-- CSV transaction export
-- User QR code generation
-- QR scan and prefilled send-money flow
-- Admin endpoints
-- Real-time transaction updates with Socket.IO
-- Structured backend logging with Winston and Morgan
-- Global error handling and request validation
-- Docker Compose support for local full-stack runs
-- Kubernetes deployment with Kustomize
-- Helm-based monitoring stack
+- Kubernetes cluster: AWS EC2 with kubeadm
+- Ingress: NGINX Ingress Controller through NodePort
+- Monitoring: Prometheus and Grafana prepared through Helm
+
+> Deployment is currently tested in a self-managed Kubernetes environment.
+> Production deployment with domain and HTTPS is planned.
+
+## Why I Built This
+
+Most wallet or fintech demos focus only on frontend screens or basic backend CRUD logic.
+I built this project to go beyond that by implementing:
+
+- Real-world authentication flows with OTP and refresh tokens
+- Idempotent financial transactions
+- Event-driven updates using WebSockets
+- Production-like infrastructure using Kubernetes and DevOps practices
+
+The goal was to simulate how a real fintech system is structured, deployed, and operated.
+
+## Key Features
+
+- JWT-based authentication with refresh token rotation
+- Wallet-to-wallet money transfers with idempotency
+- Razorpay integration with webhook validation
+- Real-time transaction updates via Socket.IO
+- CSV export and advanced transaction filtering
+- QR-based payments and scanning
+- Admin analytics and monitoring APIs
 
 ## Tech Stack
 
-### Frontend
+| Layer | Tools |
+|---|---|
+| Frontend | React, React Router, Tailwind CSS, Axios, Socket.IO Client, Nginx |
+| Backend | Node.js, Express, MongoDB, Mongoose, JWT, Socket.IO, Nodemailer |
+| Payments | Razorpay, webhook signature validation, mock payment mode |
+| Testing | Jest, Supertest |
+| DevOps | Docker, Docker Compose, Kubernetes, kubeadm, Kustomize, Helm |
+| Infrastructure | AWS EC2, NGINX Ingress Controller, MongoDB StatefulSet |
+| Monitoring | Prometheus, Grafana, Alertmanager |
+| CI/CD | GitHub Actions, Docker Hub |
 
-- React 18
-- React Router v6
-- Tailwind CSS
-- Axios
-- Socket.IO Client
-- React Hot Toast
-- Framer Motion
-- `html5-qrcode`
-- `qrcode.react`
-- Nginx
+## Architecture
 
-### Backend
+```text
+User
+  |
+  v
+NGINX Ingress
+  |
+  +--> Frontend - React served by Nginx
+  |
+  +--> Backend - Node.js and Express
+          |
+          v
+       MongoDB - StatefulSet with persistent storage
 
-- Node.js
-- Express
-- MongoDB
-- Mongoose
-- JWT
-- Express Validator
-- Socket.IO
-- Nodemailer
-- Razorpay SDK
-- Winston
-- Morgan
-- Jest
-- Supertest
+Monitoring:
+Prometheus -> Grafana
 
-### DevOps
+CI/CD:
+GitHub Actions -> Docker images -> Kubernetes
+```
 
-- Docker
-- Docker Compose
-- Kubernetes
-- kubeadm
-- Kustomize
-- NGINX Ingress Controller
-- Helm
-- Prometheus
-- Grafana
-- Alertmanager
-- GitHub Actions
+## System Design Highlights
+
+- Idempotency handling for financial operations
+- Separation of frontend, backend, and database layers
+- Stateless backend with external persistent storage
+- Real-time communication using Socket.IO
+- Secure token lifecycle with refresh token rotation
+- Service-based communication inside Kubernetes
+
+## DevOps & Infrastructure
+
+- Deployed on AWS EC2 using a self-managed Kubernetes cluster created with kubeadm
+- Implemented ingress-based routing using NGINX Ingress Controller
+- Configured MongoDB as a StatefulSet with persistent storage
+- Used ConfigMaps and Secrets for environment management
+- Integrated CI/CD pipeline using GitHub Actions
+- Prepared monitoring stack using Helm for Prometheus, Grafana, and Alertmanager
+- Used Kustomize so the application can be deployed with one command:
+
+```bash
+kubectl apply -k k8s/
+```
 
 ## Project Structure
 
 ```text
 digital-wallet-system/
   backend/
-    controllers/
-    middleware/
-    models/
-    routes/
-    tests/
-    utils/
-    Dockerfile
-    healthcheck.js
-    package.json
-    server.js
   frontend/
-    public/
-    src/
-      components/
-      context/
-      pages/
-      utils/
-    Dockerfile
-    nginx.conf
-    package.json
   k8s/
     backend/
-      configmap.yaml
-      deployment.yaml
-      secret.yaml
-      service.yaml
     database/
-      mongo.yaml
-      storage.yaml
     frontend/
-      deployment.yaml
-      service.yaml
     ingress/
-      helm-instructions.md
-      ingress.yaml
     monitoring/
-      helm-instructions.md
-      values.yaml
     namespace.yaml
     kustomization.yaml
-  .github/
-    workflows/
-      ci-cd.yml
+  .github/workflows/
   docker-compose.yml
-  README.md
 ```
 
-## Local Backend Setup
-
-```bash
-cd backend
-npm install
-cp .env.example .env
-```
-
-Minimum local `.env` values:
-
-```env
-PORT=5000
-NODE_ENV=development
-MONGODB_URI=mongodb://localhost:27017/digital-wallet
-JWT_SECRET=replace_with_a_long_random_secret
-JWT_REFRESH_SECRET=replace_with_a_different_long_random_secret
-JWT_EXPIRE=15m
-JWT_REFRESH_EXPIRE=7d
-FRONTEND_URL=http://localhost:3000
-```
-
-Email is required for OTP and reset-password flows:
-
-```env
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-password
-```
-
-Razorpay is optional. Mock payment mode works without Razorpay keys.
-
-```env
-RAZORPAY_KEY_ID=your_razorpay_key_id
-RAZORPAY_KEY_SECRET=your_razorpay_key_secret
-RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
-```
-
-Start backend:
-
-```bash
-npm run dev
-```
-
-Backend URL:
-
-```text
-http://localhost:5000
-```
-
-## Local Frontend Setup
-
-```bash
-cd frontend
-npm install
-cp .env.example .env
-```
-
-Local frontend `.env` values:
-
-```env
-REACT_APP_API_URL=http://localhost:5000/api
-REACT_APP_SERVER_URL=http://localhost:5000
-GENERATE_SOURCEMAP=false
-```
-
-Start frontend:
-
-```bash
-npm start
-```
-
-Frontend URL:
-
-```text
-http://localhost:3000
-```
-
-## Frontend Routes
-
-Public routes:
-
-- `/signup`
-- `/signin`
-- `/login`
-- `/register`
-- `/verify-otp`
-- `/forgot-password`
-- `/reset-password`
-
-Protected routes:
-
-- `/dashboard`
-- `/add-money`
-- `/send`
-- `/send-money`
-- `/transactions`
-- `/profile`
-- `/qr-code`
-- `/scan-qr`
-
-## API Endpoints
-
-### Auth
-
-- `POST /api/auth/register`
-- `POST /api/auth/verify-otp`
-- `POST /api/auth/resend-otp`
-- `POST /api/auth/login`
-- `POST /api/auth/refresh-token`
-- `POST /api/auth/forgot-password`
-- `POST /api/auth/reset-password`
-- `POST /api/auth/logout`
-
-### Wallet
-
-- `GET /api/wallet/balance`
-- `GET /api/wallet/stats`
-- `GET /api/wallet/analytics`
-- `GET /api/wallet/transactions`
-- `GET /api/wallet/transactions/export`
-- `GET /api/wallet/search-users`
-- `POST /api/wallet/transfer`
-
-Supported transaction filters:
-
-- `type`
-- `startDate`
-- `endDate`
-- `minAmount`
-- `maxAmount`
-
-### Payment
-
-- `GET /api/payment/methods`
-- `POST /api/payment/create-order`
-- `POST /api/payment/verify`
-- `POST /api/payment/webhook`
-
-### User
-
-- `GET /api/user/profile`
-- `GET /api/user/qr-code`
-
-### Transaction
-
-- `GET /api/transactions`
-- `GET /api/transactions/:id`
-
-### Admin
-
-- `GET /api/admin/dashboard`
-- `GET /api/admin/users`
-- `GET /api/admin/transactions`
-
-### Health
-
-- `GET /api/health`
-
-## End-To-End Test Flow
-
-1. Register a user.
-2. Verify the user with OTP from email.
-3. Login and store the access token.
-4. Add money using mock payment or Razorpay.
-5. Register and verify a second user.
-6. Transfer money to the second user.
-7. Check transaction history.
-8. Export transactions as CSV.
-9. Generate a QR code.
-10. Scan a QR code and complete a send-money flow.
-
-## Useful API Examples
-
-Register:
-
-```http
-POST /api/auth/register
-Content-Type: application/json
-```
-
-```json
-{
-  "name": "Test User",
-  "email": "testuser@example.com",
-  "phone": "9876543210",
-  "password": "Password@123"
-}
-```
-
-Verify OTP:
-
-```http
-POST /api/auth/verify-otp
-Content-Type: application/json
-```
-
-```json
-{
-  "email": "testuser@example.com",
-  "otp": "123456"
-}
-```
-
-Login:
-
-```http
-POST /api/auth/login
-Content-Type: application/json
-```
-
-```json
-{
-  "email": "testuser@example.com",
-  "password": "Password@123"
-}
-```
-
-Add money with mock payment:
-
-```http
-POST /api/payment/create-order
-Authorization: Bearer <access-token>
-Content-Type: application/json
-x-idempotency-key: add-money-001
-```
-
-```json
-{
-  "amount": 5000,
-  "paymentGateway": "MOCK",
-  "idempotencyKey": "add-money-001"
-}
-```
-
-Transfer money:
-
-```http
-POST /api/wallet/transfer
-Authorization: Bearer <access-token>
-Content-Type: application/json
-x-idempotency-key: transfer-001
-```
-
-```json
-{
-  "receiverEmail": "receiver@example.com",
-  "amount": 500,
-  "description": "Test transfer",
-  "idempotencyKey": "transfer-001"
-}
-```
-
-## Scripts
+## Local Setup
 
 Backend:
 
 ```bash
 cd backend
+npm install
+cp .env.example .env
 npm run dev
-npm start
-npm test
 ```
 
 Frontend:
 
 ```bash
 cd frontend
+npm install
+cp .env.example .env
 npm start
-npm run build
-npm test
 ```
 
-## Testing
-
-Run backend tests:
-
-```bash
-cd backend
-npm test
-```
-
-Build frontend:
-
-```bash
-cd frontend
-npm run build
-```
-
-Current backend test suites:
-
-- `authController.test.js`
-- `walletController.test.js`
-- `paymentController.test.js`
-
-## Docker Deployment
-
-Run the full stack locally:
+Docker:
 
 ```bash
 docker-compose up --build
 ```
 
-Docker Compose services:
-
-- Backend API on port `5000`
-- Frontend Nginx server mapped to host port `3000`
-- MongoDB on port `27017`
-
-Access URLs:
+Local URLs:
 
 ```text
 Frontend: http://localhost:3000
@@ -457,42 +158,25 @@ Backend:  http://localhost:5000
 Health:   http://localhost:5000/api/health
 ```
 
-## Kubernetes Folder
+## Kubernetes Deployment
 
-The Kubernetes setup is under `k8s/` and supports:
+This Kubernetes setup is built for a self-managed kubeadm cluster on AWS EC2.
+It does not use EKS, AWS ALB Ingress Controller, or ALB annotations.
 
-```bash
-kubectl apply -k k8s/
-```
+Main Kubernetes components:
 
-Resources included:
-
-- Namespace: `wallet`
-- Backend ConfigMap: `backend-config`
-- Backend Secret: `backend-secret`
-- Backend Deployment and ClusterIP Service
 - Frontend Deployment and ClusterIP Service
-- MongoDB PersistentVolume
+- Backend Deployment and ClusterIP Service
 - MongoDB StatefulSet and ClusterIP Service
-- NGINX Ingress
-- Helm instructions for NGINX Ingress Controller
-- Helm values and instructions for Prometheus/Grafana
+- MongoDB PersistentVolume and PersistentVolumeClaim
+- NGINX Ingress for `/`, `/api`, and `/socket.io`
+- Backend ConfigMap and Secret
 
-## kubeadm Deployment On AWS EC2
+Important backend config:
 
-This deployment assumes:
-
-- Kubernetes was created with kubeadm on EC2 instances.
-- NGINX Ingress Controller is installed.
-- EC2 security groups allow inbound traffic to NodePort `30080`.
-- MongoDB local storage path exists or can be created at `/data/mongo`.
-
-Required EC2 security group inbound rule for browser access:
-
-```text
-Type: Custom TCP
-Port: 30080
-Source: 0.0.0.0/0
+```yaml
+MONGODB_URI: "mongodb://mongo:27017/digital-wallet"
+FRONTEND_URL: "/"
 ```
 
 Install NGINX Ingress Controller:
@@ -509,27 +193,15 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   --set controller.service.nodePorts.https=30443
 ```
 
-Check NGINX Ingress Controller:
-
-```bash
-kubectl get pods -n ingress-nginx
-kubectl get svc -n ingress-nginx
-```
-
-Update these files before production deployment:
-
-- `k8s/backend/secret.yaml`
-- `k8s/backend/configmap.yaml`
-
-Keep `FRONTEND_URL` in `k8s/backend/configmap.yaml` as:
+AWS security group rule required for browser access:
 
 ```text
-/
+Type: Custom TCP
+Port: 30080
+Source: 0.0.0.0/0
 ```
 
-Ingress handles browser routing, so do not hard-code the worker node IP in `FRONTEND_URL`.
-
-Deploy the application:
+Deploy application:
 
 ```bash
 kubectl apply -k k8s/
@@ -551,15 +223,10 @@ Application URL:
 http://<worker-node-public-ip>:30080
 ```
 
-Ingress routes:
+## Monitoring
 
-- `/` goes to frontend
-- `/api` goes to backend
-- `/socket.io` goes to backend
-
-## Monitoring With Helm
-
-Install Prometheus, Grafana, and Alertmanager:
+Monitoring stack is prepared using Helm for Prometheus, Grafana, and Alertmanager.
+It is configured in `k8s/monitoring/`, but it is only deployed after running the Helm command below.
 
 ```bash
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -571,148 +238,81 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
   -f k8s/monitoring/values.yaml
 ```
 
-Check monitoring:
-
-```bash
-kubectl get pods -n monitoring
-kubectl get svc -n monitoring
-kubectl get pvc -n monitoring
-```
-
-Grafana is exposed on NodePort `32000`:
+Grafana is exposed through NodePort `32000`:
 
 ```text
 http://<worker-node-public-ip>:32000
 ```
 
-Get Grafana password:
+## CI/CD Pipeline
 
-```bash
-kubectl get secret -n monitoring monitoring-grafana -o jsonpath="{.data.admin-password}" | base64 --decode
-```
+Automated pipeline using GitHub Actions:
 
-Default Grafana username:
+- Runs backend tests on every push
+- Builds Docker images for frontend and backend
+- Push images to Docker Hub
+- Ready for Kubernetes deployment integration
 
-```text
-admin
-```
+This ensures consistency and reduces manual deployment effort.
 
-## Debugging Commands
-
-Check all wallet resources:
-
-```bash
-kubectl get all -n wallet
-```
-
-Check backend logs:
-
-```bash
-kubectl logs deployment/backend -n wallet
-```
-
-Check frontend logs:
-
-```bash
-kubectl logs deployment/frontend -n wallet
-```
-
-Check MongoDB pod:
-
-```bash
-kubectl describe pod -n wallet -l app.kubernetes.io/component=database
-```
-
-Check backend pod details:
-
-```bash
-kubectl describe pod -n wallet -l app.kubernetes.io/component=backend
-```
-
-Check service endpoints:
-
-```bash
-kubectl get endpoints -n wallet
-```
-
-Check ingress:
-
-```bash
-kubectl describe ingress wallet-ingress -n wallet
-```
-
-Check persistent storage:
-
-```bash
-kubectl get pv
-kubectl get pvc -n wallet
-kubectl describe pvc -n wallet
-```
-
-Restart backend:
-
-```bash
-kubectl rollout restart deployment/backend -n wallet
-```
-
-Restart frontend:
-
-```bash
-kubectl rollout restart deployment/frontend -n wallet
-```
-
-## CI/CD
-
-GitHub Actions workflow:
+Workflow file:
 
 ```text
 .github/workflows/ci-cd.yml
 ```
-
-The workflow runs on pushes to `main` and performs:
-
-- Checkout
-- Node.js setup
-- Backend dependency install
-- Backend tests
-- Backend Docker image build
-- Frontend Docker image build
-- Docker Hub login
-- Docker image push
 
 Required GitHub secrets:
 
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
 
-## Security Checklist
+## Testing
 
-- Do not commit real `.env` files.
-- Replace placeholder values in `k8s/backend/secret.yaml`.
-- Use strong unique values for `JWT_SECRET` and `JWT_REFRESH_SECRET`.
-- Use an app password or provider-specific SMTP credential for email.
-- Keep Razorpay secrets private.
-- Allow only required NodePorts in AWS security groups.
-- Add TLS for production ingress.
-- Rotate secrets if they are exposed.
+Backend tests:
 
-## Production Checklist
+```bash
+cd backend
+npm test
+```
 
-- Build and push backend Docker image.
-- Build and push frontend Docker image.
-- Update image names in Kubernetes deployments if needed.
-- Update backend secrets.
-- Update `FRONTEND_URL`.
-- Open EC2 security group inbound access for `30080`.
-- Install NGINX Ingress Controller.
-- Apply manifests with `kubectl apply -k k8s/`.
-- Confirm MongoDB PVC is bound.
-- Confirm all pods are running.
-- Confirm frontend loads from browser.
-- Confirm backend health endpoint works through ingress.
-- Install monitoring with Helm.
-- Verify registration, OTP, login, add-money, transfer, QR, and CSV export flows.
+Frontend production build:
+
+```bash
+cd frontend
+npm run build
+```
+
+## Debugging Commands
+
+```bash
+kubectl get all -n wallet
+kubectl logs deployment/backend -n wallet
+kubectl logs deployment/frontend -n wallet
+kubectl describe pod -n wallet -l app.kubernetes.io/component=database
+kubectl get endpoints -n wallet
+kubectl describe ingress wallet-ingress -n wallet
+kubectl get pv
+kubectl get pvc -n wallet
+```
+
+## Challenges & Learnings
+
+- Handling MongoDB connectivity issues in Kubernetes by replacing localhost with service DNS
+- Managing persistent storage using hostPath in kubeadm clusters
+- Debugging NodePort and AWS security group networking issues
+- Setting up ingress routing without managed cloud services such as EKS or ALB
+- Separating sensitive and non-sensitive backend configuration with Secrets and ConfigMaps
+- Keeping frontend, backend, database, ingress, and monitoring concerns separated in Kubernetes
+
+## Future Improvements
+
+- Add Horizontal Pod Autoscaler
+- Enable HTTPS using cert-manager
+- Migrate to managed Kubernetes with EKS for production environments
+- Add centralized logging with an EFK or Loki stack
+- Add frontend integration tests
+- Add database-backed backend integration tests
 
 ## License
 
-This project is provided for learning, development, and deployment practice. Update this section with the final license before publishing a production release.
+This project is provided for learning, development, and deployment practice.
