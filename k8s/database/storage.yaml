@@ -15,3 +15,11 @@ spec:
   hostPath:
     path: /data/mongo
     type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - <worker-node-hostname>   # replace with: kubectl get nodes

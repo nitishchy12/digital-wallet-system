@@ -41,3 +41,5 @@ Thumbs.db
 
 # Local-only docs (keep file on machine, not on GitHub)
 docs/Digital-Wallet.postman_collection.json
+
+k8s/backend/secret.local.yaml

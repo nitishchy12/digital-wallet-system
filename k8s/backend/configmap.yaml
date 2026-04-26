@@ -14,4 +14,4 @@ data:
   MONGODB_URI: "mongodb://mongo:27017/digital-wallet"
   JWT_EXPIRE: "15m"
   JWT_REFRESH_EXPIRE: "7d"
-  FRONTEND_URL: "/"
+  FRONTEND_URL: "http://<worker-node-public-ip>:30080"
