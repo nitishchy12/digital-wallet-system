@@ -1,9 +1,11 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
+const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
+
 // Create axios instance
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api',
+  baseURL: API_BASE_URL,
   timeout: 15000,
   headers: {
     'Content-Type': 'application/json'
@@ -97,7 +99,7 @@ api.interceptors.response.use(
       try {
         // Use a raw axios call (not `api`) to avoid interceptor loop
         const refreshResponse = await axios.post(
-          `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/auth/refresh-token`,
+          `${API_BASE_URL}/auth/refresh-token`,
           { refreshToken },
           {
             headers: {

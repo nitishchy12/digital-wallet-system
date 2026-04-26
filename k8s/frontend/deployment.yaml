@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: wallet-frontend
   namespace: wallet
+  labels:
+    app: wallet-frontend
 spec:
   replicas: 2
   selector:
@@ -16,5 +18,26 @@ spec:
       containers:
       - name: frontend
         image: nitishchy12/wallet-frontend:latest
+        imagePullPolicy: Always
         ports:
-        - containerPort: 3000
+        - name: http
+          containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 128Mi

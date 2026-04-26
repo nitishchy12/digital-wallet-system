@@ -3,10 +3,13 @@ kind: Service
 metadata:
   name: wallet-backend
   namespace: wallet
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
 spec:
   selector:
     app: wallet-backend
   ports:
-    - port: 5000
-      targetPort: 5000
+    - name: http
+      port: 5000
+      targetPort: http
   type: ClusterIP

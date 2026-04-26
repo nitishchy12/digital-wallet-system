@@ -1,62 +1,92 @@
-# Digital Wallet
+# Digital Wallet System
 
-A full-stack digital wallet project with authentication, OTP verification, wallet transfers, transaction history, QR scan/pay flow, and admin endpoints.
+Digital Wallet System is a full-stack wallet application built with React, Node.js, Express, MongoDB, Socket.IO, Docker, and Kubernetes. It supports account registration, OTP verification, JWT authentication, wallet balance management, money transfer, add-money payments, QR-based payment flow, transaction history, CSV export, admin APIs, and AWS EKS deployment support.
 
-## Current Project Status
+The project is designed as a practical production-style wallet system. It includes API validation, refresh-token rotation, idempotency keys for financial operations, Razorpay payment verification, webhook reconciliation, Docker images, Kubernetes manifests, AWS Application Load Balancer ingress, and Prometheus/Grafana monitoring instructions through Helm.
 
-- Frontend and backend both build and run.
-- Payment supports **real Razorpay flow** (order create + signature verify + wallet update in transaction) and mock mode for local testing.
-- Backend is hardened with stricter validation, structured logging, global error handling, and atomic wallet operations.
-- CI/CD workflow is configured via GitHub Actions to run backend tests, build Docker images, and push to Docker Hub on `main` branch pushes.
-- **Transactions Dashboard upgraded:** Added Advanced Filtering (by date and amount) and Native CSV Export downloads via Blob streaming.
-- **MongoDB Fallbacks:** Developed an intelligent fallback wrapper that enables local non-replica-set MongoDB instances to process requests smoothly without throwing transaction cluster errors.
-- Frontend route flow follows:
-  - `/signup`
-  - `/signin`
-  - `/dashboard`
-  - `/send`
-- Legacy frontend routes are redirected for compatibility (`/login`, `/register`, `/send-money`).
+## Current Status
 
-## Key Design Decisions
+- Backend tests pass with Jest.
+- Frontend production build compiles successfully.
+- Docker setup is available for local full-stack execution.
+- Kubernetes manifests are organized with Kustomize.
+- AWS EKS deployment guide is included.
+- Prometheus, Grafana, and Alertmanager can be installed through Helm.
+- Frontend routes are wired to work behind `/api` and `/socket.io` when deployed through Nginx or ingress.
 
-- Used JWT access + refresh token flow for stateless authentication with token rotation.
-- Used MongoDB sessions/transactions for balance transfer and add-money consistency.
-- Separated `User`, `Wallet`, and `Transaction` models for clear domain boundaries.
-- Added strong input validation via `express-validator` on auth/payment/wallet APIs.
-- Added request logging with Morgan and structured logs with Winston.
-- Added indexes for scale on `email`, `createdAt`, `senderId`, and `receiverId` query paths.
-- Added request idempotency keys for add-money and transfer APIs to prevent duplicate processing.
-- Stores hashed refresh tokens in DB and rotates refresh token on login/refresh.
-- Added Razorpay webhook verification and retry-safe reconciliation handling.
+## Main Features
 
-### Auth Flow Fix
-- Handled `requiresVerification` flag in frontend auth state
-- Prevented unverified users from accessing protected wallet routes
-- Added proper redirect to OTP verification before dashboard access
+- User registration with OTP email verification
+- Login with JWT access token and refresh token
+- Refresh-token rotation with hashed refresh token storage
+- Forgot-password and reset-password flow
+- Protected wallet routes for verified users only
+- Wallet balance view
+- Add money through mock payment mode or Razorpay
+- Razorpay order creation and signature verification
+- Razorpay webhook handling with duplicate-event protection
+- Money transfer between users
+- Idempotency keys for add-money and transfer requests
+- Transaction history with filters
+- CSV transaction export
+- QR code generation for user payment details
+- QR scan and prefilled send-money flow
+- Dashboard, profile, transaction, QR, and admin endpoints
+- Real-time transaction updates through Socket.IO
+- Structured logging with Winston and request logging with Morgan
+- Global error handling and validation middleware
+- Kubernetes health probes and resource limits
+- MongoDB StatefulSet with persistent storage for Kubernetes
 
 ## Tech Stack
 
 ### Frontend
-- React 18 (CRA)
+
+- React 18
 - React Router v6
 - Tailwind CSS
 - Axios
-- Socket.io client
-- html5-qrcode + qrcode.react
+- Socket.IO client
+- React Hot Toast
+- Framer Motion
+- `html5-qrcode`
+- `qrcode.react`
+- Nginx for production serving
 
 ### Backend
-- Node.js + Express
-- MongoDB + Mongoose
-- JWT auth
+
+- Node.js
+- Express
+- MongoDB
+- Mongoose
+- JWT
 - Express Validator
-- Socket.io
-- Winston + Morgan
+- Socket.IO
 - Nodemailer
+- Razorpay SDK
+- Winston
+- Morgan
+- Jest
+- Supertest
+
+### DevOps
+
+- Docker
+- Docker Compose
+- Kubernetes
+- Kustomize
+- AWS EKS
+- AWS Load Balancer Controller
+- Helm
+- Prometheus
+- Grafana
+- Alertmanager
+- GitHub Actions
 
 ## Project Structure
 
 ```text
-PatymProject/
+digital-wallet-system/
   backend/
     controllers/
     middleware/
@@ -64,67 +94,111 @@ PatymProject/
     routes/
     tests/
     utils/
+    Dockerfile
+    healthcheck.js
+    package.json
     server.js
   frontend/
+    public/
     src/
       components/
       context/
       pages/
       utils/
-    public/
+    Dockerfile
+    nginx.conf
+    package.json
+  k8s/
+    backend/
+    frontend/
+    ingress/
+    monitoring/
+    aws-eks-deploy.md
+    configmap.yaml
+    kustomization.yaml
+    mongo.yaml
+    namespace.yaml
+    secret.yaml
+  .github/
+    workflows/
+      ci-cd.yml
+  docker-compose.yml
+  README.md
 ```
 
-## Local Setup
+## Backend Setup
 
-### 1) Backend
+Go to the backend folder and install dependencies:
 
 ```bash
 cd backend
 npm install
 ```
 
-Create `.env` from `.env.example` and update values.
+Create a `.env` file from `.env.example`:
 
-Required minimum for local run:
+```bash
+cp .env.example .env
+```
+
+Minimum local backend configuration:
 
 ```env
 PORT=5000
 NODE_ENV=development
 MONGODB_URI=mongodb://localhost:27017/digital-wallet
-JWT_SECRET=your_jwt_secret
-JWT_REFRESH_SECRET=your_refresh_secret
+JWT_SECRET=replace_with_a_long_random_secret
+JWT_REFRESH_SECRET=replace_with_a_different_long_random_secret
+JWT_EXPIRE=15m
+JWT_REFRESH_EXPIRE=7d
 FRONTEND_URL=http://localhost:3000
 ```
 
-For real Razorpay flow, also set:
+Email is required for OTP and reset-password flows:
+
+```env
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-app-password
+```
+
+Razorpay is optional. Mock payment mode works without Razorpay keys.
 
 ```env
 RAZORPAY_KEY_ID=your_razorpay_key_id
 RAZORPAY_KEY_SECRET=your_razorpay_key_secret
+RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
 ```
 
-MongoDB config is environment-aware:
-- `NODE_ENV=development` -> defaults to `mongodb://localhost:27017/digital-wallet`
-- `NODE_ENV=production` -> defaults to `mongodb://mongo:27017/digital-wallet`
-- Explicit `MONGODB_URI` still overrides both
-- If a Docker-style URI using `mongo` is present during a normal local run, the backend automatically switches to `localhost` to avoid startup crashes
-
-Start backend:
+Start the backend:
 
 ```bash
 npm run dev
-# or
-npm start
 ```
 
-### 2) Frontend
+The backend runs on:
+
+```text
+http://localhost:5000
+```
+
+## Frontend Setup
+
+Go to the frontend folder and install dependencies:
 
 ```bash
 cd frontend
 npm install
 ```
 
-Create `.env` from `.env.example`.
+Create a `.env` file from `.env.example`:
+
+```bash
+cp .env.example .env
+```
+
+Local frontend configuration:
 
 ```env
 REACT_APP_API_URL=http://localhost:5000/api
@@ -132,35 +206,45 @@ REACT_APP_SERVER_URL=http://localhost:5000
 GENERATE_SOURCEMAP=false
 ```
 
-Start frontend:
+Start the frontend:
 
 ```bash
 npm start
 ```
 
-Frontend runs on `http://localhost:3000`.
+The frontend runs on:
 
-## Key Frontend Routes
+```text
+http://localhost:3000
+```
 
-### Public
-- `/signup` - Register
-- `/signin` - Login
-- `/verify-otp` - OTP verification
-- `/forgot-password` - Request password reset
-- `/reset-password` - Reset password
+## Application Routes
 
-### Protected
-- `/dashboard` - Wallet overview + recent transactions
-- `/add-money` - Add money (Razorpay or mock)
-- `/send` - Send money to users
-- `/transactions` - Transaction list
-- `/profile` - User profile
-- `/qr-code` - Show your QR code
-- `/scan-qr` - Scan and prefill send flow
+### Public Routes
 
-## API Overview
+- `/signup`
+- `/signin`
+- `/login` redirects to `/signin`
+- `/register` redirects to `/signup`
+- `/verify-otp`
+- `/forgot-password`
+- `/reset-password`
+
+### Protected Routes
+
+- `/dashboard`
+- `/add-money`
+- `/send`
+- `/send-money` redirects to `/send`
+- `/transactions`
+- `/profile`
+- `/qr-code`
+- `/scan-qr`
+
+## API Endpoints
 
 ### Auth
+
 - `POST /api/auth/register`
 - `POST /api/auth/verify-otp`
 - `POST /api/auth/resend-otp`
@@ -171,286 +255,426 @@ Frontend runs on `http://localhost:3000`.
 - `POST /api/auth/logout`
 
 ### Wallet
+
 - `GET /api/wallet/balance`
 - `GET /api/wallet/stats`
 - `GET /api/wallet/analytics`
-- `GET /api/wallet/transactions` (Supports `type`, `startDate`, `endDate`, `minAmount`, `maxAmount`)
-- `GET /api/wallet/transactions/export` (Streams custom `.csv` Blob)
+- `GET /api/wallet/transactions`
+- `GET /api/wallet/transactions/export`
 - `GET /api/wallet/search-users`
 - `POST /api/wallet/transfer`
 
+Supported transaction query filters:
+
+- `type`
+- `startDate`
+- `endDate`
+- `minAmount`
+- `maxAmount`
+
 ### Payment
+
 - `GET /api/payment/methods`
 - `POST /api/payment/create-order`
 - `POST /api/payment/verify`
 - `POST /api/payment/webhook`
-  - Verifies `x-razorpay-signature`
-  - Reconciles `payment.captured` events
-  - Ignores duplicate retries safely
+
+Payment behavior:
+
+- Mock mode can add money without external payment credentials.
+- Razorpay mode creates an order and verifies the payment signature.
+- Webhook handling verifies `x-razorpay-signature`.
+- Duplicate webhook retries are recorded and ignored safely.
 
 ### User
+
 - `GET /api/user/profile`
 - `GET /api/user/qr-code`
 
+### Transaction
+
+- `GET /api/transactions`
+- `GET /api/transactions/:id`
+
 ### Admin
+
 - `GET /api/admin/dashboard`
 - `GET /api/admin/users`
 - `GET /api/admin/transactions`
 
 ### Health
+
 - `GET /api/health`
 
-## Postman Guide (Quick E2E)
+## Typical End-To-End Flow
 
-Use this order to test complete flow quickly:
+1. Register a user with name, email, phone, and password.
+2. Read the OTP from the configured email inbox.
+3. Verify the OTP.
+4. Login and store the access token and refresh token.
+5. Add money through mock payment or Razorpay.
+6. Register and verify a second user.
+7. Transfer money to the second user.
+8. View transaction history.
+9. Export transactions as CSV.
+10. Generate a QR code.
+11. Scan a QR code and complete a send-money flow.
 
-1. `POST /api/auth/register`
-   - Body:
-   ```json
-   {
-     "name": "Test User",
-     "email": "testuser@example.com",
-     "phone": "9876543210",
-     "password": "Password@123"
-   }
-   ```
+## Example API Test Flow
 
-2. `POST /api/auth/verify-otp`
-   - Get OTP from your email setup.
-   - Body:
-   ```json
-   {
-     "email": "testuser@example.com",
-     "otp": "123456"
-   }
-   ```
-   - Save `data.accessToken` from response as a Postman variable, e.g. `token`.
+Register:
 
-3. `POST /api/auth/login`
-   - Body:
-   ```json
-   {
-     "email": "testuser@example.com",
-     "password": "Password@123"
-   }
-   ```
-   - Update `token` variable from `data.accessToken`.
+```http
+POST /api/auth/register
+Content-Type: application/json
+```
 
-4. Add auth header for protected calls:
-   - `Authorization: Bearer {{token}}`
+```json
+{
+  "name": "Test User",
+  "email": "testuser@example.com",
+  "phone": "9876543210",
+  "password": "Password@123"
+}
+```
 
-5. `GET /api/wallet/balance`
+Verify OTP:
 
-6. `POST /api/payment/create-order` (Razorpay or mock)
-   - Body:
-   ```json
-   {
-     "amount": 5000,
-     "paymentGateway": "RAZORPAY",
-     "idempotencyKey": "add-money-unique-key-1"
-   }
-   ```
-   - Header: `x-idempotency-key: add-money-unique-key-1`
+```http
+POST /api/auth/verify-otp
+Content-Type: application/json
+```
 
-7. For Razorpay: complete checkout on frontend and call `POST /api/payment/verify`.
+```json
+{
+  "email": "testuser@example.com",
+  "otp": "123456"
+}
+```
 
-8. Create second user similarly, then transfer:
-   - `POST /api/wallet/transfer`
-   - Body:
-   ```json
-   {
-     "receiverEmail": "seconduser@example.com",
-     "amount": 500,
-     "description": "test transfer",
-     "idempotencyKey": "transfer-unique-key-1"
-   }
-   ```
-   - Header: `x-idempotency-key: transfer-unique-key-1`
+Login:
 
-9. `GET /api/wallet/transactions`
-10. `GET /api/wallet/stats`
-11. `GET /api/wallet/analytics`
+```http
+POST /api/auth/login
+Content-Type: application/json
+```
 
-Suggested Postman variables:
-- `baseUrl = http://localhost:5000`
-- `token = <jwt access token>`
+```json
+{
+  "email": "testuser@example.com",
+  "password": "Password@123"
+}
+```
+
+Use the access token for protected routes:
+
+```http
+Authorization: Bearer <access-token>
+```
+
+Add money with mock mode:
+
+```http
+POST /api/payment/create-order
+Authorization: Bearer <access-token>
+Content-Type: application/json
+x-idempotency-key: add-money-001
+```
+
+```json
+{
+  "amount": 5000,
+  "paymentGateway": "MOCK",
+  "idempotencyKey": "add-money-001"
+}
+```
+
+Transfer money:
+
+```http
+POST /api/wallet/transfer
+Authorization: Bearer <access-token>
+Content-Type: application/json
+x-idempotency-key: transfer-001
+```
+
+```json
+{
+  "receiverEmail": "receiver@example.com",
+  "amount": 500,
+  "description": "Test transfer",
+  "idempotencyKey": "transfer-001"
+}
+```
 
 ## Scripts
 
 ### Backend
-- `npm run dev` - nodemon server
-- `npm start` - node server
-- `npm test` - jest
 
-Current backend test suites:
+```bash
+npm run dev
+npm start
+npm test
+```
+
+### Frontend
+
+```bash
+npm start
+npm run build
+npm test
+```
+
+## Testing
+
+Backend tests are located in `backend/tests`.
+
+Current test suites:
+
 - `authController.test.js`
 - `walletController.test.js`
 - `paymentController.test.js`
 
-### Frontend
-- `npm start` - dev server
-- `npm run build` - production build
-- `npm test` - test runner
+Run backend tests:
 
-## Docker Setup
+```bash
+cd backend
+npm test
+```
 
-Run full application using Docker:
+Build the frontend:
+
+```bash
+cd frontend
+npm run build
+```
+
+## Docker Deployment
+
+Run the full stack locally with Docker Compose:
 
 ```bash
 docker-compose up --build
 ```
 
-Services:
-- Backend: Node.js API (port 5000)
-- Frontend: React app via Nginx (port 3000)
-- MongoDB: Database container (port 27017)
-- Backend healthcheck: `GET /api/health` (used by Docker healthcheck)
+Docker Compose services:
+
+- Backend API on port `5000`
+- Frontend Nginx server on port `3000`
+- MongoDB on port `27017`
 
 Access URLs:
-- Frontend: `http://localhost:3000`
-- Backend: `http://localhost:5000`
 
-Docker files included:
+```text
+Frontend: http://localhost:3000
+Backend:  http://localhost:5000
+Health:   http://localhost:5000/api/health
+```
+
+Docker files:
+
 - `backend/Dockerfile`
-- `backend/.dockerignore`
 - `frontend/Dockerfile`
-- `frontend/.dockerignore`
 - `frontend/nginx.conf`
 - `docker-compose.yml`
 
-Important backend env for Docker Compose:
+## Kubernetes Deployment
 
-```env
-NODE_ENV=production
-MONGODB_URI=mongodb://mongo:27017/digital-wallet
+The Kubernetes files are stored in `k8s/`.
+
+The app can be rendered with Kustomize:
+
+```bash
+kubectl kustomize k8s
 ```
 
-Notes:
-- Keep `.env` local only (never commit).
-- Keep `.env.example` committed as template.
-- `docker-compose.yml` uses conditional `depends_on` for startup ordering.
-- Backend Docker image is optimized with multi-stage build and runs as non-root user.
-- Backend Mongo config now switches cleanly by environment, so local runs do not log Docker fallback warnings.
-- If your local `.env` still contains `mongodb://mongo:27017/...`, the backend now auto-corrects it for non-Docker runs.
+Deploy everything:
 
-## CI/CD Setup
+```bash
+kubectl apply -k k8s
+```
 
-GitHub Actions workflow file:
-- `.github/workflows/ci-cd.yml`
+Check resources:
 
-Pipeline trigger:
-- `push` to `main`
+```bash
+kubectl get pods -n wallet
+kubectl get svc -n wallet
+kubectl get ingress -n wallet
+kubectl get pvc -n wallet
+```
 
-Pipeline actions:
-- Checkout repository
-- Setup Node.js 18
-- Install backend dependencies
-- Run backend tests
-- Build backend and frontend Docker images
-- Login to Docker Hub
-- Push Docker images
+Kubernetes resources include:
 
-Required GitHub Secrets:
+- Namespace: `wallet`
+- ConfigMap: `wallet-config`
+- Secret: `wallet-secrets`
+- Backend Deployment and Service
+- Frontend Deployment and Service
+- MongoDB StatefulSet and Service
+- AWS ALB Ingress
+- Persistent volume claim for MongoDB
+
+Before deploying to a real cluster, update:
+
+- `k8s/secret.yaml`
+- `k8s/configmap.yaml`
+- Docker image names in backend and frontend deployment files if needed
+
+## AWS EKS Deployment
+
+AWS EKS deployment instructions are documented in:
+
+```text
+k8s/aws-eks-deploy.md
+```
+
+The EKS guide covers:
+
+- Updating kubeconfig
+- Installing AWS Load Balancer Controller with Helm
+- Applying the wallet manifests
+- Getting the ALB DNS name
+- Updating `FRONTEND_URL`
+- Checking pods, services, ingress, logs, and persistent volume claims
+
+The ingress is configured for the AWS Load Balancer Controller with:
+
+- `ingressClassName: alb`
+- internet-facing ALB
+- IP target type
+- `/api` routed to backend
+- `/socket.io` routed to backend
+- `/` routed to frontend
+
+## Monitoring With Helm
+
+Monitoring instructions are in:
+
+```text
+k8s/monitoring/helm-instructions.md
+```
+
+Monitoring values are stored in:
+
+```text
+k8s/monitoring/values.yaml
+```
+
+Install Prometheus, Grafana, and Alertmanager:
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  -f k8s/monitoring/values.yaml
+```
+
+Check monitoring resources:
+
+```bash
+kubectl get pods -n monitoring
+kubectl get svc -n monitoring
+```
+
+## CI/CD
+
+GitHub Actions workflow:
+
+```text
+.github/workflows/ci-cd.yml
+```
+
+The workflow runs on pushes to `main` and performs:
+
+- Checkout
+- Node.js setup
+- Backend dependency install
+- Backend tests
+- Backend Docker image build
+- Frontend Docker image build
+- Docker Hub login
+- Docker image push
+
+Required GitHub secrets:
+
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
 
-## Production Checklist (Before DevOps)
+## Security Notes
 
-- Add frontend test coverage (component/integration tests).
-- Add backend integration tests (DB-backed tests for transfer and webhook race conditions).
-- Add alerting/monitoring sinks for logs (ELK, CloudWatch, or Grafana stack).
+- Do not commit real `.env` files.
+- Replace placeholder values in `k8s/secret.yaml` before production deployment.
+- Use strong unique values for `JWT_SECRET` and `JWT_REFRESH_SECRET`.
+- Use provider-specific app passwords for SMTP credentials.
+- Keep Razorpay keys and webhook secrets private.
+- Use HTTPS on production ingress.
+- Restrict database access to internal cluster networking.
+- Rotate secrets if they are exposed.
 
-## Test Scenarios
+## Production Checklist
 
-### Authentication
-- User registration with valid details
-- OTP verification success and failure
-- Login with correct and incorrect credentials
-- Refresh token flow
+- Replace all placeholder secrets.
+- Configure a real domain name.
+- Add HTTPS to the AWS ALB ingress.
+- Confirm AWS Load Balancer Controller is installed.
+- Confirm EBS CSI driver and default StorageClass are available.
+- Confirm MongoDB PVC is bound.
+- Configure email provider credentials.
+- Configure Razorpay credentials if real payments are required.
+- Run backend tests.
+- Build frontend production assets.
+- Apply Kubernetes manifests.
+- Install monitoring stack.
+- Check backend logs and health endpoints.
+- Verify registration, OTP, login, add-money, transfer, QR, and CSV export flows.
 
-### Wallet
-- Fetch wallet balance
-- Transfer money between users
-- Prevent transfer with insufficient balance
+## Useful Commands
 
-### Payment
-- Create Razorpay order
-- Successful payment verification
-- Failed/invalid signature verification
-- Webhook reconciliation
+Render Kubernetes manifests:
 
-### Idempotency
-- Prevent duplicate transfer requests
-- Prevent duplicate add-money requests
+```bash
+kubectl kustomize k8s
+```
 
-### Analytics
-- Fetch monthly transaction summary
-- Fetch top receivers
+Deploy Kubernetes manifests:
 
-## Detailed Test Cases
+```bash
+kubectl apply -k k8s
+```
 
-### Authentication
+Restart backend:
 
-| Test Case | Input | Expected Output |
-|---|---|---|
-| Register valid user | Valid email/password | Success response |
-| Register duplicate email | Existing email | Error |
-| Login valid | Correct credentials | JWT token |
-| Login invalid | Wrong password | Error |
-| OTP valid | Correct OTP | Verified |
-| OTP invalid | Wrong OTP | Error |
+```bash
+kubectl rollout restart deployment/wallet-backend -n wallet
+```
 
-### Payment (Razorpay)
+View backend logs:
 
-| Test Case | Input | Expected Output |
-|---|---|---|
-| Create order | Valid amount | Order created |
-| Verify payment valid | Correct signature | Wallet updated |
-| Verify payment invalid | Wrong signature | Rejected |
-| Duplicate verify | Same idempotency key | No duplicate credit |
+```bash
+kubectl logs deployment/wallet-backend -n wallet
+```
 
-### Wallet Transfer
+View frontend logs:
 
-| Test Case | Input | Expected Output |
-|---|---|---|
-| Valid transfer | Sufficient balance | Success |
-| Insufficient balance | Low balance | Error |
-| Invalid receiver | Wrong email | Error |
-| Duplicate transfer | Same idempotency key | Single transaction |
+```bash
+kubectl logs deployment/wallet-frontend -n wallet
+```
 
-### Analytics
+Describe ingress:
 
-| Test Case | Input | Expected Output |
-|---|---|---|
-| Fetch analytics | Valid user | Data returned |
-| No transactions | Empty data | Default values |
+```bash
+kubectl describe ingress wallet-ingress -n wallet
+```
 
-## Edge Cases
+Check MongoDB storage:
 
-### Wallet / Payments
-- Double-click on Pay button
-- Network retry causing duplicate request
-- Payment success but verify API fails
-- Webhook arrives before verify API
-- Webhook arrives twice
+```bash
+kubectl get pvc -n wallet
+```
 
-### Authentication
-- Expired JWT token
-- Refresh token reuse (attack scenario)
-- Invalid OTP attempts multiple times
+## License
 
-### Concurrency
-- Two transfers at same time
-- Transfer plus add money simultaneously
-
-### Data Integrity
-- Negative amount input
-- Large amount overflow
-- Self-transfer (user sending to self)
-
-## Failure Handling
-
-- All wallet operations use MongoDB transactions to ensure atomicity
-- Idempotency keys prevent duplicate financial operations
-- Payment verification ensures wallet updates only after signature validation
-- Webhook reconciliation ensures eventual consistency between payment gateway and wallet state
+This project is provided for learning, development, and deployment practice. Update this section with the final license you want to use before publishing a production release.
