@@ -1,19 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: wallet-backend
+  name: backend
   namespace: wallet
   labels:
-    app: wallet-backend
+    app.kubernetes.io/name: digital-wallet
+    app.kubernetes.io/component: backend
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: wallet-backend
+      app.kubernetes.io/name: digital-wallet
+      app.kubernetes.io/component: backend
   template:
     metadata:
       labels:
-        app: wallet-backend
+        app.kubernetes.io/name: digital-wallet
+        app.kubernetes.io/component: backend
     spec:
       containers:
         - name: backend
@@ -24,9 +27,9 @@ spec:
               containerPort: 5000
           envFrom:
             - configMapRef:
-                name: wallet-config
+                name: backend-config
             - secretRef:
-                name: wallet-secrets
+                name: backend-secrets
           readinessProbe:
             httpGet:
               path: /api/health

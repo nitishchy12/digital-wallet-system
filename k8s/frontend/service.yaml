@@ -1,15 +1,17 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: wallet-frontend
+  name: frontend
   namespace: wallet
-  annotations:
-    alb.ingress.kubernetes.io/healthcheck-path: /health
+  labels:
+    app.kubernetes.io/name: digital-wallet
+    app.kubernetes.io/component: frontend
 spec:
+  type: ClusterIP
   selector:
-    app: wallet-frontend
+    app.kubernetes.io/name: digital-wallet
+    app.kubernetes.io/component: frontend
   ports:
     - name: http
       port: 80
       targetPort: http
-  type: ClusterIP

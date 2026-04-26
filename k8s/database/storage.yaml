@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mongo-pv
+  labels:
+    app.kubernetes.io/name: digital-wallet
+    app.kubernetes.io/component: database
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: mongo-local-storage
+  hostPath:
+    path: /mnt/digital-wallet/mongo
+    type: DirectoryOrCreate

@@ -3,14 +3,14 @@ kind: Ingress
 metadata:
   name: wallet-ingress
   namespace: wallet
+  labels:
+    app.kubernetes.io/name: digital-wallet
+    app.kubernetes.io/component: ingress
   annotations:
-    kubernetes.io/ingress.class: alb
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
-    alb.ingress.kubernetes.io/group.name: wallet
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
-  ingressClassName: alb
+  ingressClassName: nginx
   rules:
     - http:
         paths:
@@ -18,20 +18,20 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: wallet-backend
+                name: backend
                 port:
                   number: 5000
           - path: /socket.io
             pathType: Prefix
             backend:
               service:
-                name: wallet-backend
+                name: backend
                 port:
                   number: 5000
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: wallet-frontend
+                name: frontend
                 port:
                   number: 80
