@@ -22,4 +22,4 @@ spec:
             - key: kubernetes.io/hostname
               operator: In
               values:
-                - ip-172-31-32-29
+                - k8s-worker-1
