@@ -247,6 +247,7 @@ data:
 ```
 
 This is required for password reset email links to work correctly.
+Replace `<worker-node-public-ip>` with your EC2 worker node public IP.
 
 **3. Set `nodeAffinity` in `k8s/database/storage.yaml`:**
 
@@ -265,7 +266,7 @@ spec:
             - key: kubernetes.io/hostname
               operator: In
               values:
-                - <worker-node-hostname>   # from: kubectl get nodes
+                - k8s-worker-1   # from: kubectl get nodes
 ```
 
 Create the directory on the worker node before deploying:
@@ -331,13 +332,13 @@ mongo-data-mongo-0      Bound    mongo-pv   10Gi
 ### Application URL
 
 ```text
-http://<worker-node-public-ip>:30080
+http://65.0.169.198:30080
 ```
 
 Health check:
 
 ```text
-http://<worker-node-public-ip>:30080/api/health
+http://65.0.169.198:30080/api/health
 ```
 
 ## Monitoring
@@ -358,7 +359,7 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 Grafana is exposed through NodePort `32000`:
 
 ```text
-http://<worker-node-public-ip>:32000
+http://65.0.169.198:32000
 ```
 
 ## CI/CD Pipeline
