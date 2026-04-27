@@ -4,12 +4,6 @@ A production-style MERN fintech application with JWT authentication, idempotent 
 
 ---
 
-## Screenshots
-
-> _Dashboard · Send Money · Transactions · QR Payments — coming soon_
-
----
-
 ## What This Project Covers
 
 Most fintech demos are basic CRUD. This one goes further:
