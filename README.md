@@ -259,9 +259,3 @@ Grafana: `http://<worker-node-public-ip>:32000` · Prometheus: `http://<worker-n
 - Replace hostPath PV with EBS CSI driver (proper cloud-native persistence)
 - Centralized logging with Loki
 - Database-backed integration tests (current tests mock MongoDB)
-
----
-
-## License
-
-MIT
