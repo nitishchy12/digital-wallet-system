@@ -128,9 +128,133 @@ const sendResetPasswordEmail = async (email, name, resetLink) => {
   }
 };
 
+// ── Worker-specific email functions (called by notificationWorker.js) ─────────
+
+const sendTransferSentEmail = async ({ to, senderName, receiverName, amount, transactionId, newBalance }) => {
+  try {
+    await getTransporter().sendMail({
+      from: `"Digital Wallet" <${getSender()}>`,
+      to,
+      subject: `You sent Rs ${Number(amount).toLocaleString('en-IN')} to ${receiverName}`,
+      html: `
+        <h2>Transfer Successful</h2>
+        <p>Hi ${senderName},</p>
+        <p>You sent <strong>Rs ${Number(amount).toLocaleString('en-IN')}</strong> to <strong>${receiverName}</strong>.</p>
+        <ul>
+          <li><b>Transaction ID:</b> <code>${transactionId}</code></li>
+          <li><b>New Balance:</b> Rs ${Number(newBalance).toLocaleString('en-IN')}</li>
+        </ul>
+        <p>If this was not you, contact support immediately.</p>
+        <p>Digital Wallet Team</p>
+      `
+    });
+    logger.info('Transfer sent email delivered to=%s txn=%s', to, transactionId);
+  } catch (err) {
+    logger.warn('sendTransferSentEmail error: %s', err.message);
+    throw err; // re-throw so BullMQ retries the job
+  }
+};
+
+const sendMoneyReceivedEmail = async ({ to, senderName, receiverName, amount, transactionId, newBalance }) => {
+  try {
+    await getTransporter().sendMail({
+      from: `"Digital Wallet" <${getSender()}>`,
+      to,
+      subject: `You received Rs ${Number(amount).toLocaleString('en-IN')} from ${senderName}`,
+      html: `
+        <h2>Money Received</h2>
+        <p>Hi ${receiverName},</p>
+        <p>You received <strong>Rs ${Number(amount).toLocaleString('en-IN')}</strong> from <strong>${senderName}</strong>.</p>
+        <ul>
+          <li><b>Transaction ID:</b> <code>${transactionId}</code></li>
+          <li><b>New Balance:</b> Rs ${Number(newBalance).toLocaleString('en-IN')}</li>
+        </ul>
+        <p>Digital Wallet Team</p>
+      `
+    });
+    logger.info('Money received email delivered to=%s txn=%s', to, transactionId);
+  } catch (err) {
+    logger.warn('sendMoneyReceivedEmail error: %s', err.message);
+    throw err;
+  }
+};
+
+const sendPaymentSuccessEmail = async ({ to, userName, amount, transactionId, newBalance }) => {
+  try {
+    await getTransporter().sendMail({
+      from: `"Digital Wallet" <${getSender()}>`,
+      to,
+      subject: `Rs ${Number(amount).toLocaleString('en-IN')} added to your wallet`,
+      html: `
+        <h2>Payment Successful</h2>
+        <p>Hi ${userName},</p>
+        <p><strong>Rs ${Number(amount).toLocaleString('en-IN')}</strong> has been added to your wallet.</p>
+        <ul>
+          <li><b>Transaction ID:</b> <code>${transactionId}</code></li>
+          <li><b>New Balance:</b> Rs ${Number(newBalance).toLocaleString('en-IN')}</li>
+        </ul>
+        <p>Digital Wallet Team</p>
+      `
+    });
+    logger.info('Payment success email delivered to=%s txn=%s', to, transactionId);
+  } catch (err) {
+    logger.warn('sendPaymentSuccessEmail error: %s', err.message);
+    throw err;
+  }
+};
+
+const sendLowBalanceEmail = async ({ to, userName, currentBalance, threshold }) => {
+  try {
+    await getTransporter().sendMail({
+      from: `"Digital Wallet" <${getSender()}>`,
+      to,
+      subject: `Low balance alert — Rs ${Number(currentBalance).toLocaleString('en-IN')} remaining`,
+      html: `
+        <h2>Low Balance Alert</h2>
+        <p>Hi ${userName},</p>
+        <p>Your wallet balance has dropped to <strong>Rs ${Number(currentBalance).toLocaleString('en-IN')}</strong>,
+           below your alert threshold of Rs ${Number(threshold).toLocaleString('en-IN')}.</p>
+        <p>Add money to continue using your wallet without interruption.</p>
+        <p>Digital Wallet Team</p>
+      `
+    });
+    logger.info('Low balance alert email delivered to=%s balance=%s', to, currentBalance);
+  } catch (err) {
+    logger.warn('sendLowBalanceEmail error: %s', err.message);
+    throw err;
+  }
+};
+
+const sendDisputeRaisedEmail = async ({ to, userName, transactionId, amount }) => {
+  try {
+    await getTransporter().sendMail({
+      from: `"Digital Wallet" <${getSender()}>`,
+      to,
+      subject: `Dispute raised for transaction ${transactionId}`,
+      html: `
+        <h2>Dispute Received</h2>
+        <p>Hi ${userName},</p>
+        <p>A dispute has been raised for transaction <code>${transactionId}</code>
+           (Rs ${Number(amount).toLocaleString('en-IN')}).</p>
+        <p>Our team will review this within 24 hours and contact you.</p>
+        <p>Digital Wallet Team</p>
+      `
+    });
+    logger.info('Dispute email delivered to=%s txn=%s', to, transactionId);
+  } catch (err) {
+    logger.warn('sendDisputeRaisedEmail error: %s', err.message);
+    throw err;
+  }
+};
+
 module.exports = {
   sendOTPEmail,
   sendTransactionEmail,
   sendWelcomeEmail,
-  sendResetPasswordEmail
+  sendResetPasswordEmail,
+  sendTransferSentEmail,
+  sendMoneyReceivedEmail,
+  sendPaymentSuccessEmail,
+  sendLowBalanceEmail,
+  sendDisputeRaisedEmail
 };

@@ -17,6 +17,18 @@ const walletSchema = new mongoose.Schema(
     currency: {
       type: String,
       default: 'INR'
+    },
+    status: {
+      type: String,
+      enum: ['active', 'frozen', 'suspended'],
+      default: 'active'
+    },
+    frozenAt: { type: Date, default: null },
+    frozenReason: { type: String, default: null },
+    frozenBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null   // null = auto-frozen by system
     }
   },
   { timestamps: true }

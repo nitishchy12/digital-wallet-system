@@ -49,7 +49,17 @@ const UserSchema = new mongoose.Schema(
     },
     lastLogin: Date,
     resetPasswordToken: String,
-    resetPasswordExpire: Date
+    resetPasswordExpire: Date,
+    kycTier: {
+      type: Number,
+      enum: [0, 1, 2],
+      default: 0
+    },
+    lowBalanceThreshold: {
+      type: Number,
+      default: 500,
+      min: 0
+    }
   },
   { timestamps: true }
 );

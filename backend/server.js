@@ -1,14 +1,16 @@
+require('dotenv').config();
+const validateEnv = require('./utils/validateEnv');
+validateEnv();
+
 const express = require('express');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
-require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/user');
@@ -16,8 +18,10 @@ const walletRoutes = require('./routes/wallet');
 const transactionRoutes = require('./routes/transaction');
 const paymentRoutes = require('./routes/payment');
 const adminRoutes = require('./routes/admin');
+const auditRoutes = require('./routes/audit');
 const logger = require('./utils/logger');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
+const { loginLimiter, registerLimiter, transferLimiter, authLimiter, globalLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -56,23 +60,8 @@ app.use(
   })
 );
 
-app.use(
-  rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 200,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { success: false, message: 'Too many requests. Try again later.' }
-  })
-);
-
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, message: 'Too many authentication attempts. Try later.' }
-});
+// Global rate limit: 200 req / 15 min per IP (Redis sliding window)
+app.use(globalLimiter);
 
 const DEFAULT_MONGODB_URIS = {
   development: 'mongodb://localhost:27017/digital-wallet',
@@ -132,6 +121,7 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/audit', auditRoutes);
 
 app.get('/api/health', (_, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
@@ -141,8 +131,13 @@ app.use(notFound);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  logger.info('Server running on port %s', PORT);
-});
+
+// Only bind the port when this file is run directly (node server.js).
+// When required by tests, supertest binds its own ephemeral port.
+if (require.main === module) {
+  server.listen(PORT, () => {
+    logger.info('Server running on port %s', PORT);
+  });
+}
 
 module.exports = { app, server };

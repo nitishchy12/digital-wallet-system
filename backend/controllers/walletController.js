@@ -4,7 +4,12 @@ const User = require('../models/User');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
-const { sendTransactionEmail } = require('../utils/emailService');
+const { enqueueNotification } = require('../utils/notificationQueue');
+const { writeAuditLog } = require('../utils/auditLogger');
+const { checkPerTransferLimit, checkDailyLimit } = require('../utils/kycLimits');
+const { acquireLock, releaseLock } = require('../utils/distributedLock');
+const { getRedisClient } = require('../utils/redis');
+const { getBalance, setBalance, invalidateMany } = require('../utils/balanceCache');
 
 const getIdempotencyKey = (req) => {
   const headerKey = req.headers?.['x-idempotency-key'];
@@ -72,27 +77,38 @@ const sessionOpt = (session, useTransaction) =>
 
 const getWalletBalance = async (req, res, next) => {
   try {
-    let wallet;
+    const userId = req.user._id;
 
+    // ── Cache-aside: serve from Redis if fresh ─────────────────────────────
+    const cached = await getBalance(userId);
+    if (cached) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          balance: cached.balance,
+          formattedBalance: `Rs ${cached.balance.toLocaleString('en-IN')}`,
+          currency: 'INR'
+        }
+      });
+    }
+
+    // ── Cache miss: read from MongoDB, then populate cache ─────────────────
+    let wallet;
     try {
       wallet = await Wallet.findOneAndUpdate(
-        { userId: req.user._id },
-        {
-          $setOnInsert: {
-            userId: req.user._id,
-            balance: 0,
-            currency: 'INR'
-          }
-        },
+        { userId },
+        { $setOnInsert: { userId, balance: 0, currency: 'INR' } },
         { new: true, upsert: true }
       );
     } catch (error) {
       if (error.code === 11000) {
-        wallet = await Wallet.findOne({ userId: req.user._id });
+        wallet = await Wallet.findOne({ userId });
       } else {
         throw error;
       }
     }
+
+    await setBalance(userId, wallet.balance);
 
     return res.status(200).json({
       success: true,
@@ -108,46 +124,125 @@ const getWalletBalance = async (req, res, next) => {
 };
 
 const transferMoney = async (req, res, next) => {
-  // ── 1. Idempotency check BEFORE opening a session ──────────────────────
   const { receiverEmail, description } = req.body;
   const amount = Number(req.body.amount);
   const senderId = req.user._id;
   const idempotencyKey = getIdempotencyKey(req);
 
+  // ── Step 1: Idempotency check — before touching anything else ──────────
   if (idempotencyKey) {
-    const existingTransaction = await Transaction.findOne({
+    const existing = await Transaction.findOne({
       idempotencyUserId: senderId,
       idempotencyKey,
       type: 'TRANSFER'
-    })
-      .populate('receiverId', 'name email')
-      .sort({ createdAt: -1 });
+    }).populate('receiverId', 'name email');
 
-    if (existingTransaction?.status === 'SUCCESS') {
+    if (existing?.status === 'SUCCESS') {
       const senderWallet = await Wallet.findOne({ userId: senderId }).select('balance');
-
       return res.status(200).json({
         success: true,
         message: 'Transfer already processed for this request',
         data: {
-          transaction: existingTransaction,
+          transaction: existing,
           senderBalance: senderWallet?.balance || 0,
-          receiver: {
-            name: existingTransaction.receiverId?.name,
-            email: existingTransaction.receiverId?.email
-          }
+          receiver: { name: existing.receiverId?.name, email: existing.receiverId?.email }
         }
       });
     }
 
-    if (existingTransaction?.status === 'PENDING') {
+    if (existing?.status === 'PENDING') {
       return res.status(409).json({
         success: false,
+        error: 'TRANSFER_IN_PROGRESS',
         message: 'A transfer is already in progress for this request'
       });
     }
   }
 
+  // ── Step 2: Wallet status check ────────────────────────────────────────
+  // Must happen before locking — no point acquiring a lock for a frozen wallet.
+  const senderWalletStatus = await Wallet.findOne({ userId: senderId }).select('status frozenReason');
+
+  if (!senderWalletStatus) {
+    return res.status(404).json({ success: false, error: 'WALLET_NOT_FOUND', message: 'Wallet not found' });
+  }
+
+  if (senderWalletStatus.status === 'frozen') {
+    await writeAuditLog({
+      action: 'TRANSFER_FAILED',
+      userId: senderId,
+      req,
+      metadata: { reason: 'WALLET_FROZEN', amount, receiverEmail },
+      severity: 'warning'
+    });
+    return res.status(403).json({
+      success: false,
+      error: 'WALLET_FROZEN',
+      message: 'Your wallet has been frozen. Please contact support.',
+      reason: senderWalletStatus.frozenReason
+    });
+  }
+
+  if (senderWalletStatus.status === 'suspended') {
+    return res.status(403).json({
+      success: false,
+      error: 'WALLET_SUSPENDED',
+      message: 'Your wallet has been suspended. Please contact support.'
+    });
+  }
+
+  // ── Step 3: KYC per-transfer limit ─────────────────────────────────────
+  const senderUser = await User.findById(senderId).select('kycTier');
+  const tierCheck = checkPerTransferLimit(senderUser?.kycTier ?? 0, amount);
+  if (!tierCheck.allowed) {
+    return res.status(403).json({ success: false, ...tierCheck });
+  }
+
+  // ── Step 4: Daily spending limit (rolling 24h aggregation) ─────────────
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const dailyAgg = await Transaction.aggregate([
+    {
+      $match: {
+        senderId: senderId,
+        type: 'TRANSFER',
+        status: 'SUCCESS',
+        createdAt: { $gte: oneDayAgo }
+      }
+    },
+    { $group: { _id: null, total: { $sum: '$amount' } } }
+  ]);
+  const alreadySpentToday = dailyAgg[0]?.total || 0;
+  const dailyCheck = checkDailyLimit(senderUser?.kycTier ?? 0, alreadySpentToday, amount);
+  if (!dailyCheck.allowed) {
+    return res.status(403).json({ success: false, ...dailyCheck });
+  }
+
+  // ── Step 5: Acquire Redis distributed lock on sender wallet ────────────
+  // This ensures only one transfer can run for a given sender at a time.
+  // If Redis is unavailable we fall through — the atomic $inc still prevents
+  // negative balance, but the lock gives us a stronger ordering guarantee.
+  const redis = getRedisClient();
+  const lockKey = `wallet:${senderId}`;
+  let lockToken = null;
+
+  try {
+    lockToken = await acquireLock(redis, lockKey);
+  } catch (lockErr) {
+    if (lockErr.code === 'LOCK_CONTENTION') {
+      // Redis is working but the key is held by another in-flight transfer
+      return res.status(409).json({
+        success: false,
+        error: 'LOCK_CONTENTION',
+        message: lockErr.message
+      });
+    }
+    // Redis is unreachable — log and continue without lock.
+    // The atomic $inc with $gte guard still prevents negative balance.
+    logger.warn('Redis unavailable for lock — proceeding without distributed lock: %s', lockErr.message);
+    lockToken = null;
+  }
+
+  // ── Step 3: Run the transfer inside a retry loop ───────────────────────
   const isTransactionUnsupportedError = (err) =>
     Boolean(
       err &&
@@ -163,84 +258,85 @@ const transferMoney = async (req, res, next) => {
 
   while (attempt < 2) {
     attempt++;
-    const { session, useTransaction } = forceNoTransaction 
+    const { session, useTransaction } = forceNoTransaction
       ? { session: null, useTransaction: false }
       : await startSessionSafe();
 
     try {
       const receiver = await User.findOne({ email: receiverEmail })
-      .select('_id name email isVerified isActive')
-      .then((doc) => doc); // no session needed for read
+        .select('_id name email isVerified isActive');
 
-    if (!receiver) {
-      await abortSafe(session, useTransaction);
-      return res.status(404).json({
-        success: false,
-        message: 'Receiver not found'
-      });
-    }
+      if (!receiver) {
+        await abortSafe(session, useTransaction);
+        await releaseLock(redis, lockKey, lockToken);
+        return res.status(404).json({ success: false, error: 'RECEIVER_NOT_FOUND', message: 'Receiver not found' });
+      }
 
-    if (!receiver.isVerified || !receiver.isActive) {
-      await abortSafe(session, useTransaction);
-      return res.status(400).json({
-        success: false,
-        message: 'Receiver account is not eligible to receive payments'
-      });
-    }
+      if (!receiver.isVerified || !receiver.isActive) {
+        await abortSafe(session, useTransaction);
+        await releaseLock(redis, lockKey, lockToken);
+        return res.status(400).json({ success: false, error: 'RECEIVER_INELIGIBLE', message: 'Receiver account is not eligible to receive payments' });
+      }
 
-    if (receiver._id.toString() === senderId.toString()) {
-      await abortSafe(session, useTransaction);
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot transfer money to yourself'
-      });
-    }
+      if (receiver._id.toString() === senderId.toString()) {
+        await abortSafe(session, useTransaction);
+        await releaseLock(redis, lockKey, lockToken);
+        return res.status(400).json({ success: false, error: 'SELF_TRANSFER', message: 'Cannot transfer money to yourself' });
+      }
 
-    // Ensure both wallets exist
-    await Wallet.updateOne(
-      { userId: senderId },
-      { $setOnInsert: { userId: senderId, balance: 0, currency: 'INR' } },
-      { upsert: true, ...sessionOpt(session, useTransaction) }
-    );
+      // Ensure both wallets exist
+      await Wallet.updateOne(
+        { userId: senderId },
+        { $setOnInsert: { userId: senderId, balance: 0, currency: 'INR' } },
+        { upsert: true, ...sessionOpt(session, useTransaction) }
+      );
+      await Wallet.updateOne(
+        { userId: receiver._id },
+        { $setOnInsert: { userId: receiver._id, balance: 0, currency: 'INR' } },
+        { upsert: true, ...sessionOpt(session, useTransaction) }
+      );
 
-    await Wallet.updateOne(
-      { userId: receiver._id },
-      { $setOnInsert: { userId: receiver._id, balance: 0, currency: 'INR' } },
-      { upsert: true, ...sessionOpt(session, useTransaction) }
-    );
+      // Atomic debit — only succeeds when balance >= amount
+      const debitResult = await Wallet.updateOne(
+        { userId: senderId, balance: { $gte: amount } },
+        { $inc: { balance: -amount } },
+        sessionOpt(session, useTransaction)
+      );
 
-    // Atomic debit — only succeeds when balance >= amount
-    const senderDebitResult = await Wallet.updateOne(
-      { userId: senderId, balance: { $gte: amount } },
-      { $inc: { balance: -amount } },
-      sessionOpt(session, useTransaction)
-    );
+      if (debitResult.modifiedCount !== 1) {
+        await abortSafe(session, useTransaction);
+        await releaseLock(redis, lockKey, lockToken);
+        const wallet = await Wallet.findOne({ userId: senderId }).select('balance');
+        await writeAuditLog({
+          action: 'TRANSFER_FAILED',
+          userId: senderId,
+          req,
+          metadata: { amount, receiverEmail, reason: 'INSUFFICIENT_FUNDS', balance: wallet?.balance },
+          severity: 'warning'
+        });
+        return res.status(400).json({
+          success: false,
+          error: 'INSUFFICIENT_FUNDS',
+          message: `Insufficient balance. Your wallet has Rs ${(wallet?.balance || 0).toLocaleString('en-IN')}.`
+        });
+      }
 
-    if (senderDebitResult.modifiedCount !== 1) {
-      await abortSafe(session, useTransaction);
-      return res.status(400).json({
-        success: false,
-        message: 'Insufficient wallet balance'
-      });
-    }
+      // Credit receiver
+      await Wallet.updateOne(
+        { userId: receiver._id },
+        { $inc: { balance: amount } },
+        sessionOpt(session, useTransaction)
+      );
 
-    // Credit receiver
-    await Wallet.updateOne(
-      { userId: receiver._id },
-      { $inc: { balance: amount } },
-      sessionOpt(session, useTransaction)
-    );
+      // Fetch updated balances
+      const [senderWallet, receiverWallet] = await Promise.all([
+        Wallet.findOne({ userId: senderId }),
+        Wallet.findOne({ userId: receiver._id })
+      ]);
 
-    // Fetch updated balances
-    const [senderWallet, receiverWallet] = await Promise.all([
-      Wallet.findOne({ userId: senderId }),
-      Wallet.findOne({ userId: receiver._id })
-    ]);
-
-    // Create transaction record
-    const [transaction] = await Transaction.create(
-      [
-        {
+      // Write Transaction record
+      const [transaction] = await Transaction.create(
+        [{
           transactionId: crypto.randomBytes(12).toString('hex'),
           senderId,
           receiverId: receiver._id,
@@ -256,75 +352,92 @@ const transferMoney = async (req, res, next) => {
             senderBalance: senderWallet.balance,
             receiverBalance: receiverWallet.balance
           }
+        }],
+        sessionOpt(session, useTransaction)
+      );
+
+      await commitSafe(session, useTransaction);
+
+      // ── Invalidate both balance caches before releasing the lock ───────
+      await invalidateMany([senderId.toString(), receiver._id.toString()]);
+
+      // ── Audit log — committed, so this is the point of truth ──────────
+      await writeAuditLog({
+        action: 'TRANSFER_COMPLETED',
+        userId: senderId,
+        req,
+        metadata: {
+          transactionId: transaction.transactionId,
+          amount,
+          receiverId: receiver._id.toString(),
+          receiverEmail: receiver.email
         }
-      ],
-      sessionOpt(session, useTransaction)
-    );
-
-    await commitSafe(session, useTransaction);
-
-    // Real-time socket notifications
-    if (global.io) {
-      global.io.to(`user-${senderId}`).emit('transaction-update', {
-        type: 'TRANSFER_SENT',
-        transaction: transaction.toObject(),
-        newBalance: senderWallet.balance
       });
 
-      global.io.to(`user-${receiver._id}`).emit('transaction-update', {
-        type: 'MONEY_RECEIVED',
-        transaction: transaction.toObject(),
-        newBalance: receiverWallet.balance
-      });
-    }
+      // ── Release lock immediately after commit ──────────────────────────
+      await releaseLock(redis, lockKey, lockToken);
 
-    // Fire-and-forget email notifications
-    Promise.allSettled([
-      sendTransactionEmail(req.user.email, req.user.name, {
-        direction: 'SENT',
-        amount,
-        counterpartyName: receiver.name,
-        description: description || 'Wallet transfer',
-        balance: senderWallet.balance,
-        transactionId: transaction.transactionId
-      }),
-      sendTransactionEmail(receiver.email, receiver.name, {
-        direction: 'RECEIVED',
-        amount,
-        counterpartyName: req.user.name,
-        description: description || 'Wallet transfer',
-        balance: receiverWallet.balance,
-        transactionId: transaction.transactionId
-      })
-    ]).catch((error) => {
-      logger.warn('Transfer notification dispatch issue: %s', error.message);
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: `Rs ${amount} transferred successfully to ${receiver.name}`,
-      data: {
-        transaction,
-        senderBalance: senderWallet.balance,
-        receiver: {
-          name: receiver.name,
-          email: receiver.email
-        }
+      // ── Real-time socket (in-process, synchronous — stays in controller) ──
+      if (global.io) {
+        global.io.to(`user-${senderId}`).emit('transaction-update', {
+          type: 'TRANSFER_SENT',
+          transaction: transaction.toObject(),
+          newBalance: senderWallet.balance
+        });
+        global.io.to(`user-${receiver._id}`).emit('transaction-update', {
+          type: 'MONEY_RECEIVED',
+          transaction: transaction.toObject(),
+          newBalance: receiverWallet.balance
+        });
       }
-    });
+
+      // ── Email via BullMQ queue — worker handles delivery asynchronously ──
+      // enqueueNotification never throws, so transfer response is never blocked
+      await enqueueNotification('TRANSFER_SENT', {
+        senderEmail:     req.user.email,
+        senderName:      req.user.name,
+        receiverName:    receiver.name,
+        amount,
+        transactionId:   transaction.transactionId,
+        senderNewBalance: senderWallet.balance
+      });
+
+      await enqueueNotification('MONEY_RECEIVED', {
+        receiverEmail:    receiver.email,
+        senderName:       req.user.name,
+        receiverName:     receiver.name,
+        amount,
+        transactionId:    transaction.transactionId,
+        receiverNewBalance: receiverWallet.balance
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Rs ${amount} transferred successfully to ${receiver.name}`,
+        data: {
+          transaction,
+          senderBalance: senderWallet.balance,
+          receiver: { name: receiver.name, email: receiver.email }
+        }
+      });
     } catch (error) {
       await abortSafe(session, useTransaction);
 
       if (useTransaction && !forceNoTransaction && isTransactionUnsupportedError(error)) {
-        logger.warn('Transfer money falling back to non-transactional mode after MongoDB rejected the transaction');
+        logger.warn('Falling back to non-transactional mode');
         forceNoTransaction = true;
         continue;
       }
 
-      logger.error('Transfer money error: %s', error.message);
+      // Always release the lock before propagating the error
+      await releaseLock(redis, lockKey, lockToken);
+      logger.error('Transfer error senderId=%s amount=%s: %s', senderId, amount, error.message);
       return next(error);
     }
   }
+
+  // Safety net: release lock if the while loop exits without returning
+  await releaseLock(redis, lockKey, lockToken);
 };
 
 const getTransactionHistory = async (req, res, next) => {

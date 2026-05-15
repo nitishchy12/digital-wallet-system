@@ -13,11 +13,12 @@ const {
 } = require('../middleware/validation');
 
 const { authenticateToken } = require('../middleware/auth');
+const { loginLimiter, registerLimiter } = require('../middleware/rateLimiter');
 
-router.post('/register', validateRegistration, authController.register);
+router.post('/register', registerLimiter, validateRegistration, authController.register);
 router.post('/verify-otp', validateVerifyOTP, authController.verifyOTP);
 router.post('/resend-otp', validateResendOTP, authController.resendOTP);
-router.post('/login', validateLogin, authController.login);
+router.post('/login', loginLimiter, validateLogin, authController.login);
 router.post('/refresh-token', validateRefreshToken, authController.refreshToken);
 router.post('/forgot-password', validateForgotPassword, authController.forgotPassword);
 router.post('/reset-password', validateResetPassword, authController.resetPassword);

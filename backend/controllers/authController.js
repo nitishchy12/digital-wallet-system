@@ -6,6 +6,7 @@ const { sendOTPEmail, sendResetPasswordEmail } = require('../utils/emailService'
 const { generateQRCode } = require('../utils/qrService');
 const { hashRefreshToken, safeTokenEqual } = require('../utils/tokenSecurity');
 const logger = require('../utils/logger');
+const { writeAuditLog } = require('../utils/auditLogger');
 
 const JWT_SECRET =
   process.env.JWT_SECRET ||
@@ -71,6 +72,13 @@ const register = async (req, res, next) => {
 
     await issueVerificationOTP(user);
 
+    await writeAuditLog({
+      action: 'USER_REGISTERED',
+      userId: user._id,
+      req,
+      metadata: { email: user.email }
+    });
+
     return res.status(201).json({
       success: true,
       message: 'Registration successful. OTP sent to email.',
@@ -113,6 +121,13 @@ const verifyOTP = async (req, res, next) => {
     }
 
     if (hashOTP(otp) !== user.verificationOTP) {
+      await writeAuditLog({
+        action: 'OTP_FAILED',
+        userId: user._id,
+        req,
+        metadata: { email: user.email },
+        severity: 'warning'
+      });
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP'
@@ -132,6 +147,13 @@ const verifyOTP = async (req, res, next) => {
     user.refreshTokenHash = hashRefreshToken(refreshToken);
     user.refreshToken = null;
     await user.save();
+
+    await writeAuditLog({
+      action: 'OTP_VERIFIED',
+      userId: user._id,
+      req,
+      metadata: { email: user.email }
+    });
 
     return res.status(200).json({
       success: true,
@@ -186,6 +208,13 @@ const login = async (req, res, next) => {
     const user = await User.findOne({ email }).select('+password');
 
     if (!user) {
+      await writeAuditLog({
+        action: 'USER_LOGIN_FAILED',
+        userId: null,
+        req,
+        metadata: { email, reason: 'user_not_found' },
+        severity: 'warning'
+      });
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
@@ -194,6 +223,13 @@ const login = async (req, res, next) => {
 
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
+      await writeAuditLog({
+        action: 'USER_LOGIN_FAILED',
+        userId: user._id,
+        req,
+        metadata: { email, reason: 'invalid_password' },
+        severity: 'warning'
+      });
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
@@ -229,6 +265,13 @@ const login = async (req, res, next) => {
     user.lastLogin = new Date();
 
     await user.save();
+
+    await writeAuditLog({
+      action: 'USER_LOGIN',
+      userId: user._id,
+      req,
+      metadata: { email: user.email }
+    });
 
     return res.status(200).json({
       success: true,
@@ -272,6 +315,13 @@ const forgotPassword = async (req, res, next) => {
 
     await sendResetPasswordEmail(user.email, user.name, resetLink);
 
+    await writeAuditLog({
+      action: 'PASSWORD_RESET_REQUESTED',
+      userId: user._id,
+      req,
+      metadata: { email: user.email }
+    });
+
     return res.status(200).json({
       success: true,
       message: 'Password reset link sent to your email'
@@ -305,6 +355,13 @@ const resetPassword = async (req, res, next) => {
     user.resetPasswordExpire = null;
 
     await user.save();
+
+    await writeAuditLog({
+      action: 'PASSWORD_RESET_COMPLETED',
+      userId: user._id,
+      req,
+      severity: 'warning'
+    });
 
     return res.status(200).json({
       success: true,
@@ -360,6 +417,12 @@ const logout = async (req, res, next) => {
       user.refreshTokenHash = null;
       await user.save();
     }
+
+    await writeAuditLog({
+      action: 'USER_LOGOUT',
+      userId: req.user._id,
+      req
+    });
 
     return res.status(200).json({
       success: true,

@@ -59,9 +59,11 @@ const validateTransfer = [
     .normalizeEmail()
     .withMessage('Please provide a valid receiver email address'),
 
+  // Max is the Tier 2 ceiling — the KYC check in the controller
+  // enforces per-tier limits (10k / 50k / 200k)
   body('amount')
-    .isFloat({ gt: 0, max: 100000 })
-    .withMessage('Amount must be greater than 0 and up to 1,00,000'),
+    .isFloat({ gt: 0, max: 200000 })
+    .withMessage('Amount must be greater than 0 (KYC tier limits apply)'),
 
   body('description')
     .optional()

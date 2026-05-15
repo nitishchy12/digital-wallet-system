@@ -119,4 +119,9 @@ router.get('/transactions', validatePagination, async (req, res, next) => {
   }
 });
 
+const { freezeWallet, unfreezeWallet } = require('../controllers/adminController');
+
+router.post('/wallet/freeze', freezeWallet);
+router.post('/wallet/unfreeze', unfreezeWallet);
+
 module.exports = router;
