@@ -7,6 +7,9 @@ const REQUIRED = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'MONGODB_URI'];
 const RECOMMENDED = ['EMAIL_USER', 'EMAIL_PASS', 'REDIS_HOST'];
 
 const validateEnv = () => {
+  // Jest sets NODE_ENV=test. Skip validation so CI doesn't need a real .env file.
+  if (process.env.NODE_ENV === 'test') return;
+
   const missing = REQUIRED.filter((k) => !process.env[k]);
 
   if (missing.length > 0) {
