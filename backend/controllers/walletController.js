@@ -846,6 +846,45 @@ const exportTransactions = async (req, res, next) => {
   }
 };
 
+const { generateReceipt } = require('../utils/receiptGenerator');
+
+const downloadReceipt = async (req, res, next) => {
+  try {
+    const { transactionId } = req.params;
+    const userId = req.user._id;
+
+    const transaction = await Transaction.findById(transactionId)
+      .populate('senderId', 'name')
+      .populate('receiverId', 'name');
+
+    if (!transaction) {
+      return res.status(404).json({ success: false, error: 'TRANSACTION_NOT_FOUND', message: 'Transaction not found' });
+    }
+
+    // senderId and receiverId on Transaction are User ObjectIds — compare directly
+    const isParty =
+      transaction.senderId?._id?.toString() === userId.toString() ||
+      transaction.receiverId?._id?.toString() === userId.toString();
+
+    if (!isParty) {
+      return res.status(403).json({ success: false, error: 'NOT_AUTHORIZED', message: 'You are not a party to this transaction' });
+    }
+
+    const senderName   = transaction.senderId?.name   || 'Unknown';
+    const receiverName = transaction.receiverId?.name || 'Unknown';
+
+    const pdfBuffer = await generateReceipt(transaction, senderName, receiverName);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="receipt-${transactionId}.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    return res.send(pdfBuffer);
+  } catch (err) {
+    logger.error('downloadReceipt error: %s', err.message);
+    return next(err);
+  }
+};
+
 module.exports = {
   getWalletBalance,
   transferMoney,
@@ -853,5 +892,6 @@ module.exports = {
   getWalletStats,
   getAnalytics,
   searchUsers,
-  exportTransactions
+  exportTransactions,
+  downloadReceipt
 };

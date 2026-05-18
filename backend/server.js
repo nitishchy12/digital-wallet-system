@@ -126,6 +126,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/disputes', disputeRoutes);
 app.use('/api/health', healthRoutes);
+app.use('/api/scheduled-transfers', require('./routes/scheduled'));
 
 app.use(notFound);
 app.use(errorHandler);
