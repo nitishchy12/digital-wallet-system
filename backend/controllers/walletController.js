@@ -159,9 +159,11 @@ const transferMoney = async (req, res, next) => {
     }
   }
 
-  // ── Step 2: Wallet status check ────────────────────────────────────────
-  // Must happen before locking — no point acquiring a lock for a frozen wallet.
-  const senderWalletStatus = await Wallet.findOne({ userId: senderId }).select('status frozenReason');
+  // ── Step 2: Wallet status + escrow check ───────────────────────────────
+  // Fetching balance + escrowHeld here lets us give a descriptive INSUFFICIENT_FUNDS
+  // error before acquiring the lock (fast fail path).
+  const senderWalletStatus = await Wallet.findOne({ userId: senderId })
+    .select('status frozenReason balance escrowHeld');
 
   if (!senderWalletStatus) {
     return res.status(404).json({ success: false, error: 'WALLET_NOT_FOUND', message: 'Wallet not found' });
@@ -188,6 +190,25 @@ const transferMoney = async (req, res, next) => {
       success: false,
       error: 'WALLET_SUSPENDED',
       message: 'Your wallet has been suspended. Please contact support.'
+    });
+  }
+
+  // Early effective-balance check — accounts for amounts locked in escrow.
+  // The atomic debit inside the lock re-checks with $expr for safety.
+  const escrowHeld = senderWalletStatus.escrowHeld || 0;
+  const effectiveBalance = senderWalletStatus.balance - escrowHeld;
+  if (effectiveBalance < amount) {
+    await writeAuditLog({
+      action: 'TRANSFER_FAILED',
+      userId: senderId,
+      req,
+      metadata: { amount, receiverEmail, reason: 'INSUFFICIENT_FUNDS', balance: senderWalletStatus.balance, escrowHeld },
+      severity: 'warning'
+    });
+    return res.status(400).json({
+      success: false,
+      error: 'INSUFFICIENT_FUNDS',
+      message: `Insufficient funds. Available: Rs ${effectiveBalance.toLocaleString('en-IN')}${escrowHeld > 0 ? ` (Rs ${escrowHeld.toLocaleString('en-IN')} held in escrow)` : ''}.`
     });
   }
 
@@ -296,9 +317,14 @@ const transferMoney = async (req, res, next) => {
         { upsert: true, ...sessionOpt(session, useTransaction) }
       );
 
-      // Atomic debit — only succeeds when balance >= amount
+      // Atomic debit — only succeeds when (balance - escrowHeld) >= amount
       const debitResult = await Wallet.updateOne(
-        { userId: senderId, balance: { $gte: amount } },
+        {
+          userId: senderId,
+          $expr: {
+            $gte: [{ $subtract: ['$balance', { $ifNull: ['$escrowHeld', 0] }] }, amount]
+          }
+        },
         { $inc: { balance: -amount } },
         sessionOpt(session, useTransaction)
       );

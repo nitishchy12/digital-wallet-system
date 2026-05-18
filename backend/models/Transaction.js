@@ -21,7 +21,7 @@ const TransactionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['SEND', 'RECEIVE', 'TRANSFER', 'ADD_MONEY'],
+      enum: ['SEND', 'RECEIVE', 'TRANSFER', 'ADD_MONEY', 'DISPUTE_REVERSAL'],
       required: true
     },
     status: {

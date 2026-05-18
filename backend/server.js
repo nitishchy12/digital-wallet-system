@@ -19,6 +19,7 @@ const transactionRoutes = require('./routes/transaction');
 const paymentRoutes = require('./routes/payment');
 const adminRoutes = require('./routes/admin');
 const auditRoutes = require('./routes/audit');
+const disputeRoutes = require('./routes/dispute');
 const logger = require('./utils/logger');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { loginLimiter, registerLimiter, transferLimiter, authLimiter, globalLimiter } = require('./middleware/rateLimiter');
@@ -122,6 +123,7 @@ app.use('/api/transactions', transactionRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/disputes', disputeRoutes);
 
 app.get('/api/health', (_, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });

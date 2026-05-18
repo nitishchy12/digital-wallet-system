@@ -29,6 +29,11 @@ const walletSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       default: null   // null = auto-frozen by system
+    },
+    escrowHeld: {
+      type: Number,
+      default: 0,
+      min: 0
     }
   },
   { timestamps: true }
