@@ -20,6 +20,7 @@ const paymentRoutes = require('./routes/payment');
 const adminRoutes = require('./routes/admin');
 const auditRoutes = require('./routes/audit');
 const disputeRoutes = require('./routes/dispute');
+const healthRoutes = require('./routes/health');
 const logger = require('./utils/logger');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { loginLimiter, registerLimiter, transferLimiter, authLimiter, globalLimiter } = require('./middleware/rateLimiter');
@@ -124,10 +125,7 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/disputes', disputeRoutes);
-
-app.get('/api/health', (_, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
+app.use('/api/health', healthRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
@@ -140,6 +138,53 @@ if (require.main === module) {
   server.listen(PORT, () => {
     logger.info('Server running on port %s', PORT);
   });
+
+  // ── Graceful shutdown ────────────────────────────────────────────────────
+  // Kubernetes sends SIGTERM, waits terminationGracePeriodSeconds (default 30s),
+  // then force-kills with SIGKILL. We use that window to drain in-flight requests.
+
+  const gracefulShutdown = async (signal) => {
+    logger.info('%s received — starting graceful shutdown', signal);
+
+    // Stop accepting new connections immediately
+    server.close(async () => {
+      logger.info('HTTP server closed — no new connections accepted');
+
+      try {
+        await mongoose.connection.close();
+        logger.info('MongoDB connection closed');
+
+        const { getRedisClient } = require('./utils/redis');
+        await getRedisClient().quit().catch(() => {});
+        logger.info('Redis connection closed');
+
+        logger.info('Graceful shutdown complete — exiting with code 0');
+        process.exit(0);
+      } catch (err) {
+        logger.error('Error during shutdown cleanup: %s', err.message);
+        process.exit(1);
+      }
+    });
+
+    // Force exit after 30 seconds if connections don't drain
+    setTimeout(() => {
+      logger.error('Shutdown timeout after 30s — forcing exit');
+      process.exit(1);
+    }, 30000);
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 }
+
+// ── Process-level safety nets (active in all modes including tests) ──────────
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled Promise Rejection: %s', reason?.stack || reason);
+});
+
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught Exception: %s', err.stack);
+  process.exit(1);
+});
 
 module.exports = { app, server };
