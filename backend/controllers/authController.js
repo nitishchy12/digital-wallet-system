@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/User');
 const Wallet = require('../models/Wallet');
+const KYCDocument = require('../models/KYCDocument');
 const { sendOTPEmail, sendResetPasswordEmail } = require('../utils/emailService');
 const { generateQRCode } = require('../utils/qrService');
 const { hashRefreshToken, safeTokenEqual } = require('../utils/tokenSecurity');
@@ -434,6 +435,107 @@ const logout = async (req, res, next) => {
   }
 };
 
+const getKYCStatus = async (req, res, next) => {
+  try {
+    const latestDoc = await KYCDocument.findOne({ userId: req.user._id }).sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        tier: req.user.kycTier,
+        status: latestDoc ? latestDoc.status : 'none',
+        docType: latestDoc?.docType,
+        targetTier: latestDoc?.targetTier,
+        submittedAt: latestDoc?.createdAt,
+        rejectionReason: latestDoc?.rejectionReason
+      }
+    });
+  } catch (error) {
+    logger.error('Get KYC status error: %s', error.message);
+    return next(error);
+  }
+};
+
+const submitKYC = async (req, res, next) => {
+  try {
+    const { docType, docNumber } = req.body;
+
+    if (req.user.kycTier >= 2) {
+      return res.status(400).json({
+        success: false,
+        message: 'You are already at the highest KYC tier'
+      });
+    }
+
+    const pendingDoc = await KYCDocument.findOne({ userId: req.user._id, status: 'pending' });
+    if (pendingDoc) {
+      return res.status(409).json({
+        success: false,
+        message: 'You already have a KYC submission pending review'
+      });
+    }
+
+    const doc = await KYCDocument.create({
+      userId: req.user._id,
+      docType,
+      docNumber,
+      targetTier: req.user.kycTier + 1
+    });
+
+    await writeAuditLog({
+      action: 'KYC_SUBMITTED',
+      userId: req.user._id,
+      req,
+      metadata: { docType, targetTier: doc.targetTier }
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'KYC document submitted for review',
+      data: {
+        status: doc.status,
+        docType: doc.docType,
+        targetTier: doc.targetTier,
+        submittedAt: doc.createdAt
+      }
+    });
+  } catch (error) {
+    logger.error('Submit KYC error: %s', error.message);
+    return next(error);
+  }
+};
+
+const getNotificationPreferences = async (req, res, next) => {
+  try {
+    return res.status(200).json({
+      success: true,
+      data: req.user.notificationPreferences || {}
+    });
+  } catch (error) {
+    logger.error('Get notification preferences error: %s', error.message);
+    return next(error);
+  }
+};
+
+const updateNotificationPreferences = async (req, res, next) => {
+  try {
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user._id,
+      { notificationPreferences: req.body },
+      { new: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Notification preferences updated',
+      data: updatedUser.notificationPreferences
+    });
+  } catch (error) {
+    logger.error('Update notification preferences error: %s', error.message);
+    return next(error);
+  }
+};
+
 module.exports = {
   register,
   verifyOTP,
@@ -442,5 +544,9 @@ module.exports = {
   refreshToken,
   logout,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  getKYCStatus,
+  submitKYC,
+  getNotificationPreferences,
+  updateNotificationPreferences
 };

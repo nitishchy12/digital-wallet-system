@@ -59,6 +59,16 @@ const UserSchema = new mongoose.Schema(
       type: Number,
       default: 500,
       min: 0
+    },
+    // Only event types with a real producer get a default — see backend/workers/notificationWorker.js
+    notificationPreferences: {
+      type: Object,
+      default: () => ({
+        TRANSFER_SENT: { email: true, inApp: true },
+        MONEY_RECEIVED: { email: true, inApp: true },
+        LOW_BALANCE_ALERT: { email: true, inApp: true },
+        DISPUTE_RAISED: { email: true, inApp: true }
+      })
     }
   },
   { timestamps: true }

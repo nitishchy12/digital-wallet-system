@@ -1,23 +1,17 @@
 // Purpose: Singleton ioredis client — one connection shared across the entire process
 // Dependencies: ioredis
-// Used by: distributedLock.js, rateLimiter.js, balanceCache.js (Days 2-3)
+// Used by: distributedLock.js, rateLimiter.js, balanceCache.js
 
 const Redis = require('ioredis');
 const logger = require('./logger');
-
-const REDIS_OPTS = {
-  host: () => process.env.REDIS_HOST || 'localhost',
-  port: () => Number(process.env.REDIS_PORT) || 6379,
-  password: () => process.env.REDIS_PASSWORD || undefined
-};
 
 let client = null;
 
 const createClient = () => {
   const c = new Redis({
-    host: REDIS_OPTS.host(),
-    port: REDIS_OPTS.port(),
-    password: REDIS_OPTS.password(),
+    host: process.env.REDIS_HOST || '127.0.0.1',
+    port: Number(process.env.REDIS_PORT) || 6379,
+    password: process.env.REDIS_PASSWORD || undefined,
     commandTimeout: 3000,
     retryStrategy: (times) => {
       if (times > 5) {
@@ -25,8 +19,7 @@ const createClient = () => {
         return null;
       }
       return Math.min(times * 200, 2000);
-    },
-    lazyConnect: true
+    }
   });
 
   c.on('connect',      () => logger.info('Redis connected'));
@@ -46,17 +39,13 @@ const getRedisClient = () => {
   return client;
 };
 
-/**
- * BullMQ requires a dedicated connection with maxRetriesPerRequest: null.
- * Each call returns a NEW client (not the singleton) — BullMQ manages its lifecycle.
- */
 const createBullMQConnection = () => {
   return new Redis({
-    host: REDIS_OPTS.host(),
-    port: REDIS_OPTS.port(),
-    password: REDIS_OPTS.password(),
-    maxRetriesPerRequest: null,   // required by BullMQ
-    enableReadyCheck: false,      // recommended for BullMQ workers
+    host: process.env.REDIS_HOST || '127.0.0.1',
+    port: Number(process.env.REDIS_PORT) || 6379,
+    password: process.env.REDIS_PASSWORD || undefined,
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
     retryStrategy: (times) => Math.min(times * 200, 3000)
   });
 };

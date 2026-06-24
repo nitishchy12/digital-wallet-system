@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
-import { 
-  FiArrowLeft, 
-  FiFilter, 
-  FiDownload, 
-  FiTrendingUp, 
+import {
+  FiArrowLeft,
+  FiFilter,
+  FiDownload,
+  FiTrendingUp,
   FiPlus,
   FiSend,
-  FiRefreshCw
+  FiRefreshCw,
+  FiFileText
 } from 'react-icons/fi';
 import toast from 'react-hot-toast';
+import RaiseDisputeModal from '../components/RaiseDisputeModal';
 
 const Transactions = () => {
   const [transactions, setTransactions] = useState([]);
@@ -26,6 +28,8 @@ const Transactions = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pagination, setPagination] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  const [disputeTransaction, setDisputeTransaction] = useState(null);
+  const [disputeSuccess, setDisputeSuccess] = useState(false);
 
   const navigate = useNavigate();
 
@@ -210,6 +214,33 @@ const Transactions = () => {
     );
   };
 
+  const handleDownloadReceipt = async (transactionId) => {
+    try {
+      const response = await api.get(`/wallet/transactions/${transactionId}/receipt`, {
+        responseType: 'blob'
+      });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `receipt-${transactionId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Receipt download failed:', error);
+      toast.error('Failed to download receipt');
+    }
+  };
+
+  function canDispute(transaction) {
+    if (transaction.direction !== 'SENT') return false;
+    if (transaction.status !== 'SUCCESS') return false;
+    const hoursElapsed = (Date.now() - new Date(transaction.createdAt).getTime()) / 3600000;
+    return hoursElapsed <= 24;
+  }
+
   if (loading && transactions.length === 0) {
     return (
       <div className="max-w-4xl mx-auto">
@@ -362,11 +393,34 @@ const Transactions = () => {
                   </div>
                 </div>
                 
-                <div className="text-right">
+                <div className="text-right flex flex-col items-end gap-1">
                   <p className={`font-semibold text-lg ${getAmountColor(transaction)}`}>
                     {getAmountPrefix(transaction)}{transaction.formattedAmount}
                   </p>
                   {getStatusBadge(transaction.status)}
+                  {transaction.status === 'SUCCESS' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDownloadReceipt(transaction._id);
+                      }}
+                      className="text-xs text-blue-500 hover:text-blue-700 border border-blue-200 px-2 py-1 rounded hover:bg-blue-50 transition-colors mt-1 flex items-center gap-1"
+                    >
+                      <FiFileText className="h-3 w-3" />
+                      Receipt
+                    </button>
+                  )}
+                  {canDispute(transaction) && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDisputeTransaction(transaction);
+                      }}
+                      className="text-xs text-red-500 hover:text-red-700 border border-red-200 px-2 py-1 rounded hover:bg-red-50 transition-colors mt-1"
+                    >
+                      Dispute
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -423,6 +477,24 @@ const Transactions = () => {
           </div>
         )}
       </div>
+
+      {disputeTransaction && (
+        <RaiseDisputeModal
+          transaction={disputeTransaction}
+          onClose={() => setDisputeTransaction(null)}
+          onSuccess={() => {
+            setDisputeTransaction(null);
+            setDisputeSuccess(true);
+            setTimeout(() => setDisputeSuccess(false), 4000);
+          }}
+        />
+      )}
+
+      {disputeSuccess && (
+        <div className="fixed bottom-6 right-6 bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg z-50 text-sm">
+          ✓ Dispute raised. Funds held in escrow pending review.
+        </div>
+      )}
     </div>
   );
 };

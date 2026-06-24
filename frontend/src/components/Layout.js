@@ -14,7 +14,10 @@ import {
   FiWifi,
   FiWifiOff,
   FiSquare,
-  FiCamera
+  FiCamera,
+  FiShield,
+  FiClock,
+  FiActivity
 } from 'react-icons/fi';
 
 const Layout = ({ children }) => {
@@ -31,6 +34,9 @@ const Layout = ({ children }) => {
     { name: 'Transactions', href: '/transactions', icon: FiList },
     { name: 'My QR Code', href: '/qr-code', icon: FiSquare },
     { name: 'Scan QR', href: '/scan-qr', icon: FiCamera },
+    { name: 'Disputes', href: '/disputes', icon: FiShield },
+    { name: 'Scheduled', href: '/scheduled-transfers', icon: FiClock },
+    { name: 'Activity', href: '/audit-log', icon: FiActivity },
     { name: 'Profile', href: '/profile', icon: FiUser },
   ];
 

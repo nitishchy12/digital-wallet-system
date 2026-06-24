@@ -1,15 +1,100 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { FiArrowLeft, FiUser, FiMail, FiPhone, FiShield, FiEdit3 } from 'react-icons/fi';
+import { FiArrowLeft, FiUser, FiMail, FiPhone, FiShield, FiEdit3, FiCreditCard } from 'react-icons/fi';
+import api from '../utils/api';
+
+const KYC_TIERS = {
+  0: {
+    label: 'Basic',
+    color: 'bg-gray-100 text-gray-700',
+    borderColor: 'border-gray-300',
+    limits: {
+      perTransfer: '₹10,000',
+      daily: '₹10,000',
+      balance: '₹10,000'
+    },
+    nextStep: 'Submit your documents to upgrade to Tier 1',
+    badge: '🔓'
+  },
+  1: {
+    label: 'Verified',
+    color: 'bg-blue-100 text-blue-700',
+    borderColor: 'border-blue-300',
+    limits: {
+      perTransfer: '₹50,000',
+      daily: '₹50,000',
+      balance: '₹1,00,000'
+    },
+    nextStep: 'Submit additional KYC documents to upgrade to Tier 2',
+    badge: '✓'
+  },
+  2: {
+    label: 'Full KYC',
+    color: 'bg-green-100 text-green-700',
+    borderColor: 'border-green-300',
+    limits: {
+      perTransfer: '₹2,00,000',
+      daily: '₹2,00,000',
+      balance: '₹5,00,000'
+    },
+    nextStep: null,
+    badge: '⭐'
+  }
+};
 
 const Profile = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('profile');
 
+  const [kycStatus, setKycStatus] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [docType, setDocType] = useState('aadhar');
+  const [docNumber, setDocNumber] = useState('');
+
+  const currentTier = user?.kycTier ?? 0;
+  const tierInfo = KYC_TIERS[currentTier];
+
+  useEffect(() => {
+    fetchKycStatus();
+  }, []);
+
+  async function fetchKycStatus() {
+    try {
+      const res = await api.get('/auth/kyc/status', { skipErrorToast: true });
+      setKycStatus(res.data.data);
+    } catch (err) {
+      // KYC status unavailable — upgrade form still works
+    }
+  }
+
+  async function handleKycSubmit(e) {
+    e.preventDefault();
+    if (!docNumber.trim()) return;
+    setUploading(true);
+    setUploadError(null);
+
+    try {
+      await api.post('/auth/kyc/submit', {
+        docType,
+        docNumber: docNumber.trim()
+      });
+      setUploadSuccess(true);
+      setDocNumber('');
+      fetchKycStatus();
+    } catch (err) {
+      setUploadError(err.response?.data?.message || 'Submission failed. Try again.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const tabs = [
     { id: 'profile', label: 'Profile', icon: FiUser },
+    { id: 'kyc', label: 'KYC & Limits', icon: FiCreditCard },
     { id: 'security', label: 'Security', icon: FiShield }
   ];
 
@@ -104,6 +189,149 @@ const Profile = () => {
     </div>
   );
 
+  const renderKycTab = () => (
+    <div className="space-y-6">
+      {/* Current tier card */}
+      <div className={`rounded-xl border-2 ${tierInfo.borderColor} p-5`}>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <p className="text-sm text-gray-500">Current KYC Level</p>
+            <h3 className="text-xl font-bold text-gray-900">
+              Tier {currentTier} — {tierInfo.label}
+            </h3>
+          </div>
+          <span className={`text-sm font-medium px-3 py-1 rounded-full ${tierInfo.color}`}>
+            {tierInfo.badge} Active
+          </span>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { label: 'Per Transfer', value: tierInfo.limits.perTransfer },
+            { label: 'Daily Limit', value: tierInfo.limits.daily },
+            { label: 'Max Balance', value: tierInfo.limits.balance }
+          ].map(item => (
+            <div key={item.label} className="bg-gray-50 rounded-xl p-3 text-center">
+              <p className="text-xs text-gray-500 mb-1">{item.label}</p>
+              <p className="text-sm font-bold text-gray-900">{item.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Tier progression */}
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-4">KYC Tier Progress</h3>
+        <div className="flex items-center gap-2">
+          {[0, 1, 2].map((tier, idx) => (
+            <div key={tier} className="flex items-center gap-2 flex-1">
+              <div className="flex-1 text-center">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-1 text-sm font-bold ${
+                  tier <= currentTier
+                    ? 'bg-primary-600 text-white'
+                    : 'bg-gray-200 text-gray-400'
+                }`}>
+                  {tier <= currentTier ? '✓' : tier}
+                </div>
+                <p className="text-xs text-gray-600">{KYC_TIERS[tier].label}</p>
+              </div>
+              {idx < 2 && (
+                <div className={`h-0.5 flex-1 ${tier < currentTier ? 'bg-primary-600' : 'bg-gray-200'}`} />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Upgrade section */}
+      {currentTier < 2 && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">
+            Upgrade to Tier {currentTier + 1}
+          </h3>
+          <p className="text-xs text-gray-500 mb-4">{tierInfo.nextStep}</p>
+
+          {kycStatus?.status === 'pending' ? (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+              <p className="text-sm font-medium text-yellow-800">
+                📋 Document under review
+              </p>
+              <p className="text-xs text-yellow-700 mt-1">
+                Our team typically reviews within 24 hours. You will be notified once approved.
+              </p>
+            </div>
+          ) : uploadSuccess ? (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+              <p className="text-sm font-medium text-green-800">
+                ✓ Document submitted successfully
+              </p>
+              <p className="text-xs text-green-700 mt-1">
+                We will review your document and upgrade your tier within 24 hours.
+              </p>
+            </div>
+          ) : (
+            <form onSubmit={handleKycSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Document Type
+                </label>
+                <select
+                  value={docType}
+                  onChange={e => setDocType(e.target.value)}
+                  className="input-field text-sm"
+                >
+                  <option value="aadhar">Aadhaar Card</option>
+                  <option value="pan">PAN Card</option>
+                  <option value="passport">Passport</option>
+                  <option value="driving_license">Driving License</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Document Number
+                </label>
+                <input
+                  type="text"
+                  value={docNumber}
+                  onChange={e => setDocNumber(e.target.value)}
+                  placeholder={docType === 'aadhar' ? 'XXXX XXXX XXXX' : docType === 'pan' ? 'ABCDE1234F' : 'Document number'}
+                  className="input-field text-sm"
+                />
+              </div>
+
+              {uploadError && (
+                <p className="text-xs text-red-600 bg-red-50 p-2 rounded-lg">{uploadError}</p>
+              )}
+
+              <button
+                type="submit"
+                disabled={uploading || !docNumber.trim()}
+                className="btn-primary w-full disabled:opacity-50"
+              >
+                {uploading ? 'Submitting...' : 'Submit for Review'}
+              </button>
+
+              <p className="text-xs text-gray-400 text-center">
+                Your document number is stored securely and never shared.
+              </p>
+            </form>
+          )}
+        </div>
+      )}
+
+      {currentTier === 2 && (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-5 text-center">
+          <p className="text-2xl mb-2">⭐</p>
+          <p className="font-semibold text-green-800">Full KYC Verified</p>
+          <p className="text-sm text-green-700 mt-1">
+            You have the highest transfer limits available.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+
   const renderSecurityTab = () => (
     <div className="space-y-6">
       <div>
@@ -116,7 +344,7 @@ const Profile = () => {
             <h4 className="font-medium text-gray-900">Password</h4>
             <p className="text-sm text-gray-500">Last updated: Never</p>
           </div>
-          <button className="btn-outline">
+          <button className="btn-outline" onClick={() => navigate('/forgot-password')}>
             Change Password
           </button>
         </div>
@@ -133,11 +361,21 @@ const Profile = () => {
 
         <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
           <div>
-            <h4 className="font-medium text-gray-900">Login Sessions</h4>
-            <p className="text-sm text-gray-500">Manage your active sessions</p>
+            <h4 className="font-medium text-gray-900">Account Activity</h4>
+            <p className="text-sm text-gray-500">View your login history and account activity</p>
           </div>
-          <button className="btn-outline">
-            View Sessions
+          <button className="btn-outline" onClick={() => navigate('/audit-log')}>
+            View Activity
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+          <div>
+            <h4 className="font-medium text-gray-900">Notification Preferences</h4>
+            <p className="text-sm text-gray-500">Choose how you're notified about activity</p>
+          </div>
+          <button className="btn-outline" onClick={() => navigate('/notification-preferences')}>
+            Manage
           </button>
         </div>
 
@@ -213,6 +451,9 @@ const Profile = () => {
                   <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
                     {user?.role?.charAt(0).toUpperCase() + user?.role?.slice(1)}
                   </span>
+                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${tierInfo.color}`}>
+                    {tierInfo.badge} KYC {tierInfo.label}
+                  </span>
                 </div>
               </div>
             </div>
@@ -245,6 +486,7 @@ const Profile = () => {
         <div className="lg:col-span-3">
           <div className="card">
             {activeTab === 'profile' && renderProfileTab()}
+            {activeTab === 'kyc' && renderKycTab()}
             {activeTab === 'security' && renderSecurityTab()}
           </div>
         </div>

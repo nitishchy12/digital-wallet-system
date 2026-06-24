@@ -176,6 +176,47 @@ const validateObjectId = (paramName) => [
   handleValidationErrors
 ];
 
+const validateKYCSubmit = [
+  body('docType')
+    .isIn(['aadhar', 'pan', 'passport', 'driving_license'])
+    .withMessage('Invalid document type'),
+  body('docNumber')
+    .trim()
+    .isLength({ min: 4, max: 50 })
+    .withMessage('Document number must be between 4 and 50 characters'),
+  handleValidationErrors
+];
+
+// Only event types with a real producer wired (see backend/workers/notificationWorker.js)
+// are allowed here — accepting arbitrary keys would let the UI silently save
+// preferences for events that never get sent.
+const NOTIFICATION_EVENT_TYPES = ['TRANSFER_SENT', 'MONEY_RECEIVED', 'LOW_BALANCE_ALERT', 'DISPUTE_RAISED'];
+
+const validateNotificationPreferences = [
+  body().custom((value) => {
+    const keys = Object.keys(value || {});
+    if (keys.length === 0) {
+      throw new Error('At least one notification preference is required');
+    }
+    for (const key of keys) {
+      if (!NOTIFICATION_EVENT_TYPES.includes(key)) {
+        throw new Error(`Unknown notification event type: ${key}`);
+      }
+      const pref = value[key];
+      if (
+        typeof pref !== 'object' ||
+        pref === null ||
+        typeof pref.email !== 'boolean' ||
+        typeof pref.inApp !== 'boolean'
+      ) {
+        throw new Error(`${key} must have boolean "email" and "inApp" fields`);
+      }
+    }
+    return true;
+  }),
+  handleValidationErrors
+];
+
 module.exports = {
   validateRegistration,
   validateLogin,
@@ -192,5 +233,7 @@ module.exports = {
   validateObjectId,
   validateForgotPassword,
   validateResetPassword,
+  validateKYCSubmit,
+  validateNotificationPreferences,
   handleValidationErrors
 };

@@ -19,6 +19,10 @@ import Transactions from './pages/Transactions';
 import Profile from './pages/Profile';
 import QRCode from './pages/QRCode';
 import ScanQR from './pages/ScanQR';
+import Disputes from './pages/Disputes';
+import ScheduledTransfers from './pages/ScheduledTransfers';
+import AuditLog from './pages/AuditLog';
+import NotificationPreferences from './pages/NotificationPreferences';
 
 function App() {
   return (
@@ -118,7 +122,39 @@ function App() {
                   </Layout>
                 </ProtectedRoute>
               } />
-              
+
+              <Route path="/disputes" element={
+                <ProtectedRoute>
+                  <Layout>
+                    <Disputes />
+                  </Layout>
+                </ProtectedRoute>
+              } />
+
+              <Route path="/scheduled-transfers" element={
+                <ProtectedRoute>
+                  <Layout>
+                    <ScheduledTransfers />
+                  </Layout>
+                </ProtectedRoute>
+              } />
+
+              <Route path="/audit-log" element={
+                <ProtectedRoute>
+                  <Layout>
+                    <AuditLog />
+                  </Layout>
+                </ProtectedRoute>
+              } />
+
+              <Route path="/notification-preferences" element={
+                <ProtectedRoute>
+                  <Layout>
+                    <NotificationPreferences />
+                  </Layout>
+                </ProtectedRoute>
+              } />
+
               {/* Redirect unknown routes to dashboard */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

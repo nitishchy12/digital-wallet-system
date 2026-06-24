@@ -9,7 +9,9 @@ const {
   validateResendOTP,
   validateForgotPassword,
   validateResetPassword,
-  validateRefreshToken
+  validateRefreshToken,
+  validateKYCSubmit,
+  validateNotificationPreferences
 } = require('../middleware/validation');
 
 const { authenticateToken } = require('../middleware/auth');
@@ -24,5 +26,11 @@ router.post('/forgot-password', validateForgotPassword, authController.forgotPas
 router.post('/reset-password', validateResetPassword, authController.resetPassword);
 
 router.post('/logout', authenticateToken, authController.logout);
+
+router.get('/kyc/status', authenticateToken, authController.getKYCStatus);
+router.post('/kyc/submit', authenticateToken, validateKYCSubmit, authController.submitKYC);
+
+router.get('/notification-preferences', authenticateToken, authController.getNotificationPreferences);
+router.put('/notification-preferences', authenticateToken, validateNotificationPreferences, authController.updateNotificationPreferences);
 
 module.exports = router;

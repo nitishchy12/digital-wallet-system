@@ -15,6 +15,47 @@ import {
   FiUsers
 } from 'react-icons/fi';
 import toast from 'react-hot-toast';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+
+function MonthlySpendChart({ data, loading }) {
+  if (loading) {
+    return (
+      <div className="animate-pulse">
+        <div className="h-4 bg-gray-200 rounded w-1/3 mb-4" />
+        <div className="h-48 bg-gray-100 rounded" />
+      </div>
+    );
+  }
+
+  const hasData = data?.some((d) => d.sent > 0 || d.received > 0);
+
+  if (!hasData) {
+    return (
+      <div className="h-48 flex items-center justify-center text-center">
+        <div>
+          <div className="text-3xl mb-2">📊</div>
+          <p className="text-sm text-gray-400">No activity yet. Send or receive money to see trends.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+        <XAxis dataKey="month" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
+        <Tooltip
+          formatter={(value) => [`Rs ${value.toLocaleString('en-IN')}`, '']}
+          contentStyle={{ borderRadius: 8, fontSize: 12 }}
+        />
+        <Bar dataKey="sent" fill="#ef4444" radius={[4, 4, 0, 0]} name="Sent" />
+        <Bar dataKey="received" fill="#22c55e" radius={[4, 4, 0, 0]} name="Received" />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
 
 const Dashboard = () => {
   const { user } = useAuth();
@@ -105,28 +146,10 @@ const Dashboard = () => {
     }
   ];
 
-  const maxMonthlyValue = Math.max(
-    1,
-    ...analytics.monthly.map((m) => Math.max(m.sent || 0, m.received || 0))
-  );
-
   const sentValue = analytics.sentVsReceived.sent || 0;
   const receivedValue = analytics.sentVsReceived.received || 0;
   const totalFlow = sentValue + receivedValue;
   const sentRatio = totalFlow ? (sentValue / totalFlow) * 100 : 0;
-
-  if (loading) {
-    return (
-      <div className="animate-pulse">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <div className="lg:col-span-2">
-            <div className="h-48 bg-gray-200 rounded-xl"></div>
-          </div>
-          <div className="h-48 bg-gray-200 rounded-xl"></div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -158,10 +181,14 @@ const Dashboard = () => {
               </button>
             </div>
             <div className="mb-6">
-              <p className="text-3xl font-bold">
-                {showBalance ? walletData.formattedBalance : 'Rs ******'}
-              </p>
-              <p className="text-blue-100 text-sm">Available Balance</p>
+              {loading ? (
+                <div className="h-9 w-40 bg-white bg-opacity-20 rounded animate-pulse" />
+              ) : (
+                <p className="text-3xl font-bold">
+                  {showBalance ? walletData.formattedBalance : 'Rs ******'}
+                </p>
+              )}
+              <p className="text-blue-100 text-sm mt-1">Available Balance</p>
             </div>
             <div className="grid grid-cols-3 gap-4">
               {quickActions.map((action) => (
@@ -183,7 +210,11 @@ const Dashboard = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Transactions</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.totalTransactions}</p>
+                {loading ? (
+                  <div className="h-7 w-12 bg-gray-200 rounded animate-pulse mt-1" />
+                ) : (
+                  <p className="text-2xl font-bold text-gray-900">{stats.totalTransactions}</p>
+                )}
               </div>
               <div className="p-3 bg-blue-100 rounded-full">
                 <FiActivity className="h-6 w-6 text-blue-600" />
@@ -195,7 +226,11 @@ const Dashboard = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Money Sent</p>
-                <p className="text-2xl font-bold text-red-600">Rs {stats.totalSent.toLocaleString('en-IN')}</p>
+                {loading ? (
+                  <div className="h-7 w-24 bg-gray-200 rounded animate-pulse mt-1" />
+                ) : (
+                  <p className="text-2xl font-bold text-red-600">Rs {stats.totalSent.toLocaleString('en-IN')}</p>
+                )}
               </div>
               <div className="p-3 bg-red-100 rounded-full">
                 <FiTrendingDown className="h-6 w-6 text-red-600" />
@@ -207,7 +242,11 @@ const Dashboard = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Money Received</p>
-                <p className="text-2xl font-bold text-green-600">Rs {stats.totalReceived.toLocaleString('en-IN')}</p>
+                {loading ? (
+                  <div className="h-7 w-24 bg-gray-200 rounded animate-pulse mt-1" />
+                ) : (
+                  <p className="text-2xl font-bold text-green-600">Rs {stats.totalReceived.toLocaleString('en-IN')}</p>
+                )}
               </div>
               <div className="p-3 bg-green-100 rounded-full">
                 <FiTrendingUp className="h-6 w-6 text-green-600" />
@@ -224,48 +263,21 @@ const Dashboard = () => {
             <FiBarChart2 className="h-5 w-5 text-gray-500" />
           </div>
 
-          {analytics.monthly.length === 0 ? (
-            <p className="text-sm text-gray-500">No monthly analytics available yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {analytics.monthly.map((item) => (
-                <div key={`${item.month}-${item.year}`}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="font-medium text-gray-700">{item.month} {item.year}</span>
-                    <span className="text-gray-500">
-                      Sent Rs {item.sent.toLocaleString('en-IN')} | Received Rs {item.received.toLocaleString('en-IN')}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="h-2 bg-gray-100 rounded overflow-hidden">
-                      <div
-                        className="h-2 bg-red-400"
-                        style={{ width: `${Math.max((item.sent / maxMonthlyValue) * 100, 2)}%` }}
-                      />
-                    </div>
-                    <div className="h-2 bg-gray-100 rounded overflow-hidden">
-                      <div
-                        className="h-2 bg-green-400"
-                        style={{ width: `${Math.max((item.received / maxMonthlyValue) * 100, 2)}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
+          <MonthlySpendChart data={analytics.monthly} loading={loading} />
+
+          {!loading && (
+            <div className="mt-6">
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">Sent vs Received Ratio</h3>
+              <div className="h-3 bg-gray-100 rounded overflow-hidden flex">
+                <div className="bg-red-400" style={{ width: `${sentRatio}%` }} />
+                <div className="bg-green-400" style={{ width: `${100 - sentRatio}%` }} />
+              </div>
+              <div className="flex justify-between text-xs text-gray-600 mt-1">
+                <span>Sent: Rs {sentValue.toLocaleString('en-IN')}</span>
+                <span>Received: Rs {receivedValue.toLocaleString('en-IN')}</span>
+              </div>
             </div>
           )}
-
-          <div className="mt-6">
-            <h3 className="text-sm font-semibold text-gray-700 mb-2">Sent vs Received Ratio</h3>
-            <div className="h-3 bg-gray-100 rounded overflow-hidden flex">
-              <div className="bg-red-400" style={{ width: `${sentRatio}%` }} />
-              <div className="bg-green-400" style={{ width: `${100 - sentRatio}%` }} />
-            </div>
-            <div className="flex justify-between text-xs text-gray-600 mt-1">
-              <span>Sent: Rs {sentValue.toLocaleString('en-IN')}</span>
-              <span>Received: Rs {receivedValue.toLocaleString('en-IN')}</span>
-            </div>
-          </div>
         </div>
 
         <div className="card">
@@ -274,8 +286,20 @@ const Dashboard = () => {
             <FiUsers className="h-5 w-5 text-gray-500" />
           </div>
 
-          {analytics.topReceivers.length === 0 ? (
-            <p className="text-sm text-gray-500">No transfer analytics yet.</p>
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="animate-pulse p-3 rounded-lg bg-gray-50">
+                  <div className="h-4 bg-gray-200 rounded w-2/3 mb-2" />
+                  <div className="h-3 bg-gray-100 rounded w-1/2" />
+                </div>
+              ))}
+            </div>
+          ) : analytics.topReceivers.length === 0 ? (
+            <div className="text-center py-8">
+              <div className="text-3xl mb-2">👥</div>
+              <p className="text-sm text-gray-400">No transfers yet. Send money to build your top receivers list.</p>
+            </div>
           ) : (
             <div className="space-y-3">
               {analytics.topReceivers.map((receiver, idx) => (
@@ -305,7 +329,19 @@ const Dashboard = () => {
           </Link>
         </div>
 
-        {recentTransactions.length === 0 ? (
+        {loading ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="animate-pulse flex items-center gap-3 p-3">
+                <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                <div className="flex-1">
+                  <div className="h-3 bg-gray-200 rounded w-1/2 mb-2" />
+                  <div className="h-2 bg-gray-100 rounded w-1/3" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : recentTransactions.length === 0 ? (
           <div className="text-center py-8">
             <FiActivity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-500">No transactions yet</p>

@@ -10,6 +10,7 @@ const { checkPerTransferLimit, checkDailyLimit } = require('../utils/kycLimits')
 const { acquireLock, releaseLock } = require('../utils/distributedLock');
 const { getRedisClient } = require('../utils/redis');
 const { getBalance, setBalance, invalidateMany } = require('../utils/balanceCache');
+const LedgerEntry = require('../models/LedgerEntry');
 
 const getIdempotencyKey = (req) => {
   const headerKey = req.headers?.['x-idempotency-key'];
@@ -284,8 +285,35 @@ const transferMoney = async (req, res, next) => {
       : await startSessionSafe();
 
     try {
+      // ── Double-checked locking: re-verify idempotency INSIDE the lock ──
+      // A concurrent request may have passed the outer check (no transaction
+      // found yet) and is now waiting here. Re-check to avoid double-debit.
+      if (idempotencyKey) {
+        const existingInner = await Transaction.findOne({
+          idempotencyUserId: senderId,
+          idempotencyKey,
+          type: 'TRANSFER'
+        }).populate('receiverId', 'name email');
+
+        if (existingInner?.status === 'SUCCESS') {
+          await abortSafe(session, useTransaction);
+          await releaseLock(redis, lockKey, lockToken);
+          const senderWalletNow = await Wallet.findOne({ userId: senderId }).select('balance');
+          return res.status(200).json({
+            success: true,
+            message: 'Transfer already processed for this request',
+            data: {
+              transactionId: existingInner._id,
+              transaction: existingInner,
+              senderBalance: senderWalletNow?.balance || 0,
+              receiver: { name: existingInner.receiverId?.name, email: existingInner.receiverId?.email }
+            }
+          });
+        }
+      }
+
       const receiver = await User.findOne({ email: receiverEmail })
-        .select('_id name email isVerified isActive');
+        .select('_id name email isVerified isActive notificationPreferences');
 
       if (!receiver) {
         await abortSafe(session, useTransaction);
@@ -382,6 +410,35 @@ const transferMoney = async (req, res, next) => {
         sessionOpt(session, useTransaction)
       );
 
+      // ── Write double-entry ledger ──────────────────────────────────────
+      // senderWallet.balance is post-debit, so balanceBefore = balance + amount
+      // receiverWallet.balance is post-credit, so balanceBefore = balance - amount
+      await LedgerEntry.create(
+        [
+          {
+            walletId: senderWallet._id,
+            transactionId: transaction._id,
+            type: 'DEBIT',
+            amount,
+            balanceBefore: senderWallet.balance + amount,
+            balanceAfter:  senderWallet.balance,
+            description: description || 'Transfer sent',
+            counterpartyWalletId: receiverWallet._id
+          },
+          {
+            walletId: receiverWallet._id,
+            transactionId: transaction._id,
+            type: 'CREDIT',
+            amount,
+            balanceBefore: receiverWallet.balance - amount,
+            balanceAfter:  receiverWallet.balance,
+            description: description || 'Transfer received',
+            counterpartyWalletId: senderWallet._id
+          }
+        ],
+        sessionOpt(session, useTransaction)
+      );
+
       await commitSafe(session, useTransaction);
 
       // ── Invalidate both balance caches before releasing the lock ───────
@@ -405,16 +462,20 @@ const transferMoney = async (req, res, next) => {
 
       // ── Real-time socket (in-process, synchronous — stays in controller) ──
       if (global.io) {
-        global.io.to(`user-${senderId}`).emit('transaction-update', {
-          type: 'TRANSFER_SENT',
-          transaction: transaction.toObject(),
-          newBalance: senderWallet.balance
-        });
-        global.io.to(`user-${receiver._id}`).emit('transaction-update', {
-          type: 'MONEY_RECEIVED',
-          transaction: transaction.toObject(),
-          newBalance: receiverWallet.balance
-        });
+        if (req.user.notificationPreferences?.TRANSFER_SENT?.inApp ?? true) {
+          global.io.to(`user-${senderId}`).emit('transaction-update', {
+            type: 'TRANSFER_SENT',
+            transaction: transaction.toObject(),
+            newBalance: senderWallet.balance
+          });
+        }
+        if (receiver.notificationPreferences?.MONEY_RECEIVED?.inApp ?? true) {
+          global.io.to(`user-${receiver._id}`).emit('transaction-update', {
+            type: 'MONEY_RECEIVED',
+            transaction: transaction.toObject(),
+            newBalance: receiverWallet.balance
+          });
+        }
       }
 
       // ── Email via BullMQ queue — worker handles delivery asynchronously ──
@@ -441,6 +502,7 @@ const transferMoney = async (req, res, next) => {
         success: true,
         message: `Rs ${amount} transferred successfully to ${receiver.name}`,
         data: {
+          transactionId: transaction._id,   // MongoDB ObjectId — used by ledger/receipt tests
           transaction,
           senderBalance: senderWallet.balance,
           receiver: { name: receiver.name, email: receiver.email }

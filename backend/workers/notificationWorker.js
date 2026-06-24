@@ -4,8 +4,10 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
+const mongoose = require('mongoose');
 const { Worker } = require('bullmq');
 const { createBullMQConnection } = require('../utils/redis');
+const User = require('../models/User');
 const {
   sendTransferSentEmail,
   sendMoneyReceivedEmail,
@@ -16,10 +18,33 @@ const {
 
 const connection = createBullMQConnection();
 
+const connectDB = async () => {
+  await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/digital-wallet');
+  console.log('[worker] MongoDB connected');
+};
+
+connectDB().catch((err) => {
+  console.error('[worker] MongoDB connection failed:', err.message);
+});
+
+// Returns false only if the user has explicitly turned email off for this
+// event type. Missing user/preferences defaults to sending (fail open),
+// same philosophy as the rate limiter — a lookup failure should never be
+// the reason a real transfer notification goes missing.
+const isEmailEnabled = async (email, eventType) => {
+  if (!email) return true;
+  const user = await User.findOne({ email }).select('notificationPreferences');
+  if (!user) return true;
+  return user.notificationPreferences?.[eventType]?.email ?? true;
+};
+
 // ── Job handlers — one per notification type ─────────────────────────────────
+// PAYMENT_SUCCESS has no preference entry and no producer wired yet (see
+// project memory) — left ungated intentionally, it never fires today.
 
 const handlers = {
   TRANSFER_SENT: async (payload) => {
+    if (!(await isEmailEnabled(payload.senderEmail, 'TRANSFER_SENT'))) return;
     await sendTransferSentEmail({
       to: payload.senderEmail,
       senderName: payload.senderName,
@@ -31,6 +56,7 @@ const handlers = {
   },
 
   MONEY_RECEIVED: async (payload) => {
+    if (!(await isEmailEnabled(payload.receiverEmail, 'MONEY_RECEIVED'))) return;
     await sendMoneyReceivedEmail({
       to: payload.receiverEmail,
       senderName: payload.senderName,
@@ -52,6 +78,7 @@ const handlers = {
   },
 
   LOW_BALANCE_ALERT: async (payload) => {
+    if (!(await isEmailEnabled(payload.userEmail, 'LOW_BALANCE_ALERT'))) return;
     await sendLowBalanceEmail({
       to: payload.userEmail,
       userName: payload.userName,
@@ -61,6 +88,7 @@ const handlers = {
   },
 
   DISPUTE_RAISED: async (payload) => {
+    if (!(await isEmailEnabled(payload.userEmail, 'DISPUTE_RAISED'))) return;
     await sendDisputeRaisedEmail({
       to: payload.userEmail,
       userName: payload.userName,
@@ -114,6 +142,7 @@ const shutdown = async (signal) => {
   console.log(`[worker] Received ${signal} — shutting down gracefully`);
   await worker.close();
   connection.disconnect();
+  await mongoose.disconnect();
   process.exit(0);
 };
 
