@@ -3,6 +3,8 @@ const router = express.Router();
 const User = require('../models/User');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
+const Dispute = require('../models/Dispute');
+const KYCDocument = require('../models/KYCDocument');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { validatePagination } = require('../middleware/validation');
 
@@ -16,6 +18,8 @@ router.get('/dashboard', async (req, res, next) => {
       totalTransactions,
       successfulTransactions,
       totalWalletBalance,
+      pendingDisputes,
+      pendingKYC,
       recentTransactions
     ] = await Promise.all([
       User.countDocuments(),
@@ -23,6 +27,8 @@ router.get('/dashboard', async (req, res, next) => {
       Transaction.countDocuments(),
       Transaction.countDocuments({ status: 'SUCCESS' }),
       Wallet.aggregate([{ $group: { _id: null, total: { $sum: '$balance' } } }]),
+      Dispute.countDocuments({ status: 'pending' }),
+      KYCDocument.countDocuments({ status: 'pending' }),
       Transaction.find()
         .populate('senderId', 'name email')
         .populate('receiverId', 'name email')
@@ -38,7 +44,9 @@ router.get('/dashboard', async (req, res, next) => {
           verifiedUsers,
           totalTransactions,
           successfulTransactions,
-          totalWalletBalance: totalWalletBalance[0]?.total || 0
+          totalWalletBalance: totalWalletBalance[0]?.total || 0,
+          pendingDisputes,
+          pendingKYC
         },
         recentTransactions
       }
@@ -119,9 +127,12 @@ router.get('/transactions', validatePagination, async (req, res, next) => {
   }
 });
 
-const { freezeWallet, unfreezeWallet } = require('../controllers/adminController');
+const { freezeWallet, unfreezeWallet, lookupUserWallet, getKYCQueue, reviewKYC } = require('../controllers/adminController');
 
 router.post('/wallet/freeze', freezeWallet);
 router.post('/wallet/unfreeze', unfreezeWallet);
+router.get('/users/lookup', lookupUserWallet);
+router.get('/kyc/queue', getKYCQueue);
+router.patch('/kyc/:id', reviewKYC);
 
 module.exports = router;

@@ -17,7 +17,8 @@ import {
   FiCamera,
   FiShield,
   FiClock,
-  FiActivity
+  FiActivity,
+  FiSettings
 } from 'react-icons/fi';
 
 const Layout = ({ children }) => {
@@ -39,6 +40,10 @@ const Layout = ({ children }) => {
     { name: 'Activity', href: '/audit-log', icon: FiActivity },
     { name: 'Profile', href: '/profile', icon: FiUser },
   ];
+
+  if (user?.role === 'admin') {
+    navigation.push({ name: 'Admin Panel', href: '/admin', icon: FiSettings });
+  }
 
   const handleLogout = async () => {
     await logout();

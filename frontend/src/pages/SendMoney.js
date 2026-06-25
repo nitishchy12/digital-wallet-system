@@ -1,9 +1,36 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
-import { FiArrowLeft, FiSearch, FiSend, FiUser, FiDollarSign } from 'react-icons/fi';
+import { FiArrowLeft, FiSearch, FiSend, FiUser, FiDollarSign, FiAlertTriangle } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import { generateIdempotencyKey } from '../utils/idempotency';
+
+// Specific, real failure codes returned by POST /wallet/transfer (walletController.js).
+// Falls back to the server's own message for anything not listed here.
+const ERROR_MESSAGES = {
+  INSUFFICIENT_FUNDS: 'Not enough balance to complete this transfer.',
+  KYC_LIMIT_EXCEEDED: 'This amount exceeds your KYC tier limit. Upgrade your KYC to send more.',
+  DAILY_LIMIT_EXCEEDED: 'You have reached your daily transfer limit. Try again tomorrow.',
+  WALLET_FROZEN: 'Your wallet is frozen. Contact support for assistance.',
+  WALLET_SUSPENDED: 'Your wallet is suspended. Contact support for assistance.',
+  LOCK_CONTENTION: 'Another transfer is currently processing. Please wait a moment and try again.',
+  TRANSFER_IN_PROGRESS: 'This transfer is already being processed.',
+  RECEIVER_NOT_FOUND: 'This recipient could not be found.',
+  RECEIVER_INELIGIBLE: 'This recipient cannot receive payments right now.',
+  SELF_TRANSFER: 'You cannot send money to yourself.',
+  WALLET_NOT_FOUND: 'Your wallet could not be found. Contact support.'
+};
+
+const DEFAULT_WALLET_INFO = {
+  balance: 0,
+  effectiveBalance: 0,
+  escrowHeld: 0,
+  kycTier: 0,
+  perTransferLimit: 10000,
+  dailyLimit: 10000,
+  alreadySpentToday: 0,
+  remainingToday: 10000
+};
 
 const SendMoney = () => {
   const [step, setStep] = useState(1); // 1: Select recipient, 2: Enter amount, 3: Confirm
@@ -14,16 +41,18 @@ const SendMoney = () => {
   const [description, setDescription] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [walletBalance, setWalletBalance] = useState(0);
+  const [walletInfo, setWalletInfo] = useState(DEFAULT_WALLET_INFO);
   const navigate = useNavigate();
   const location = useLocation();
+
+  const walletBalance = walletInfo.effectiveBalance;
 
   const quickAmounts = [100, 500, 1000, 2000, 5000];
 
   const fetchWalletBalance = useCallback(async () => {
     try {
       const response = await api.get('/wallet/balance');
-      setWalletBalance(response.data.data.balance);
+      setWalletInfo({ ...DEFAULT_WALLET_INFO, ...response.data.data });
     } catch (error) {
       console.error('Failed to fetch wallet balance:', error);
     }
@@ -93,7 +122,7 @@ const SendMoney = () => {
 
   const handleSendMoney = async () => {
     const amountNum = parseInt(amount);
-    
+
     if (!amountNum || amountNum < 1) {
       toast.error('Please enter a valid amount');
       return;
@@ -104,8 +133,13 @@ const SendMoney = () => {
       return;
     }
 
-    if (amountNum > 100000) {
-      toast.error('Maximum transfer amount is ₹1,00,000');
+    if (amountNum > walletInfo.perTransferLimit) {
+      toast.error(`Your Tier ${walletInfo.kycTier} limit is ₹${walletInfo.perTransferLimit.toLocaleString('en-IN')} per transfer.`);
+      return;
+    }
+
+    if (amountNum > walletInfo.remainingToday) {
+      toast.error('This would exceed your daily transfer limit.');
       return;
     }
 
@@ -133,7 +167,8 @@ const SendMoney = () => {
       navigate('/dashboard');
     } catch (error) {
       console.error('Money transfer failed:', error);
-      const message = error.response?.data?.message || 'Transfer failed';
+      const errorCode = error.response?.data?.error;
+      const message = ERROR_MESSAGES[errorCode] || error.response?.data?.message || 'Transfer failed. Please try again.';
       toast.error(message);
     } finally {
       setIsLoading(false);
@@ -256,6 +291,11 @@ const SendMoney = () => {
         <p className="text-sm text-blue-800">
           Available Balance: <span className="font-semibold">₹{walletBalance.toLocaleString('en-IN')}</span>
         </p>
+        {walletInfo.escrowHeld > 0 && (
+          <p className="text-xs text-orange-600 mt-1">
+            ₹{walletInfo.escrowHeld.toLocaleString('en-IN')} held in escrow for active disputes
+          </p>
+        )}
       </div>
 
       {/* Amount Input */}
@@ -279,6 +319,20 @@ const SendMoney = () => {
           <p className="mt-2 text-sm text-gray-600">
             Amount: ₹{parseInt(amount).toLocaleString('en-IN')}
           </p>
+        )}
+        {Number(amount) > walletInfo.perTransferLimit && (
+          <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+            <FiAlertTriangle className="h-3 w-3" />
+            Your Tier {walletInfo.kycTier} limit is ₹{walletInfo.perTransferLimit.toLocaleString('en-IN')} per transfer.
+          </p>
+        )}
+        {Number(amount) > 0 &&
+          Number(amount) <= walletInfo.perTransferLimit &&
+          Number(amount) > walletInfo.remainingToday && (
+            <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+              <FiAlertTriangle className="h-3 w-3" />
+              You've sent ₹{walletInfo.alreadySpentToday.toLocaleString('en-IN')} today. Only ₹{walletInfo.remainingToday.toLocaleString('en-IN')} of your daily limit remains.
+            </p>
         )}
       </div>
 
@@ -331,7 +385,13 @@ const SendMoney = () => {
         </button>
         <button
           onClick={() => setStep(3)}
-          disabled={!amount || parseInt(amount) < 1 || parseInt(amount) > walletBalance}
+          disabled={
+            !amount ||
+            parseInt(amount) < 1 ||
+            parseInt(amount) > walletBalance ||
+            parseInt(amount) > walletInfo.perTransferLimit ||
+            parseInt(amount) > walletInfo.remainingToday
+          }
           className="flex-1 btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Continue
@@ -375,12 +435,12 @@ const SendMoney = () => {
           <div className="border-t pt-4">
             <div className="flex justify-between">
               <span className="text-gray-600">Current Balance:</span>
-              <span className="text-gray-900">₹{walletBalance.toLocaleString('en-IN')}</span>
+              <span className="text-gray-900">₹{walletInfo.balance.toLocaleString('en-IN')}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-600">Balance After:</span>
               <span className="font-medium text-gray-900">
-                ₹{(walletBalance - parseInt(amount)).toLocaleString('en-IN')}
+                ₹{(walletInfo.balance - parseInt(amount)).toLocaleString('en-IN')}
               </span>
             </div>
           </div>

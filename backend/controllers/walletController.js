@@ -6,7 +6,7 @@ const Transaction = require('../models/Transaction');
 const logger = require('../utils/logger');
 const { enqueueNotification } = require('../utils/notificationQueue');
 const { writeAuditLog } = require('../utils/auditLogger');
-const { checkPerTransferLimit, checkDailyLimit } = require('../utils/kycLimits');
+const { checkPerTransferLimit, checkDailyLimit, getLimitsForTier } = require('../utils/kycLimits');
 const { acquireLock, releaseLock } = require('../utils/distributedLock');
 const { getRedisClient } = require('../utils/redis');
 const { getBalance, setBalance, invalidateMany } = require('../utils/balanceCache');
@@ -17,6 +17,24 @@ const getIdempotencyKey = (req) => {
   const bodyKey = req.body?.idempotencyKey;
   const key = (headerKey || bodyKey || '').toString().trim();
   return key || null;
+};
+
+// Rolling 24h spend — shared by the real enforcement check in transferMoney
+// and the display-only figure in getWalletBalance, so they can never drift.
+const getAlreadySpentToday = async (senderId) => {
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const dailyAgg = await Transaction.aggregate([
+    {
+      $match: {
+        senderId,
+        type: 'TRANSFER',
+        status: 'SUCCESS',
+        createdAt: { $gte: oneDayAgo }
+      }
+    },
+    { $group: { _id: null, total: { $sum: '$amount' } } }
+  ]);
+  return dailyAgg[0]?.total || 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -80,6 +98,21 @@ const getWalletBalance = async (req, res, next) => {
   try {
     const userId = req.user._id;
 
+    // escrowHeld changes via the dispute flow, not the balance cache's
+    // invalidation path, so it's always read fresh rather than cached.
+    const escrowHeld = (await Wallet.findOne({ userId }).select('escrowHeld'))?.escrowHeld || 0;
+
+    const kycTier = req.user.kycTier ?? 0;
+    const limits = getLimitsForTier(kycTier);
+    const alreadySpentToday = await getAlreadySpentToday(userId);
+    const limitInfo = {
+      kycTier,
+      perTransferLimit: limits.perTransferLimit,
+      dailyLimit: limits.dailyLimit,
+      alreadySpentToday,
+      remainingToday: Math.max(0, limits.dailyLimit - alreadySpentToday)
+    };
+
     // ── Cache-aside: serve from Redis if fresh ─────────────────────────────
     const cached = await getBalance(userId);
     if (cached) {
@@ -88,7 +121,10 @@ const getWalletBalance = async (req, res, next) => {
         data: {
           balance: cached.balance,
           formattedBalance: `Rs ${cached.balance.toLocaleString('en-IN')}`,
-          currency: 'INR'
+          currency: 'INR',
+          escrowHeld,
+          effectiveBalance: cached.balance - escrowHeld,
+          ...limitInfo
         }
       });
     }
@@ -116,7 +152,10 @@ const getWalletBalance = async (req, res, next) => {
       data: {
         balance: wallet.balance,
         formattedBalance: `Rs ${wallet.balance.toLocaleString('en-IN')}`,
-        currency: wallet.currency
+        currency: wallet.currency,
+        escrowHeld: wallet.escrowHeld || 0,
+        effectiveBalance: wallet.balance - (wallet.escrowHeld || 0),
+        ...limitInfo
       }
     });
   } catch (error) {
@@ -221,19 +260,7 @@ const transferMoney = async (req, res, next) => {
   }
 
   // ── Step 4: Daily spending limit (rolling 24h aggregation) ─────────────
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const dailyAgg = await Transaction.aggregate([
-    {
-      $match: {
-        senderId: senderId,
-        type: 'TRANSFER',
-        status: 'SUCCESS',
-        createdAt: { $gte: oneDayAgo }
-      }
-    },
-    { $group: { _id: null, total: { $sum: '$amount' } } }
-  ]);
-  const alreadySpentToday = dailyAgg[0]?.total || 0;
+  const alreadySpentToday = await getAlreadySpentToday(senderId);
   const dailyCheck = checkDailyLimit(senderUser?.kycTier ?? 0, alreadySpentToday, amount);
   if (!dailyCheck.allowed) {
     return res.status(403).json({ success: false, ...dailyCheck });

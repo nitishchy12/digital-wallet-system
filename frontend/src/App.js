@@ -23,6 +23,10 @@ import Disputes from './pages/Disputes';
 import ScheduledTransfers from './pages/ScheduledTransfers';
 import AuditLog from './pages/AuditLog';
 import NotificationPreferences from './pages/NotificationPreferences';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import DisputeQueue from './pages/admin/DisputeQueue';
+import KYCQueue from './pages/admin/KYCQueue';
+import WalletManagement from './pages/admin/WalletManagement';
 
 function App() {
   return (
@@ -151,6 +155,38 @@ function App() {
                 <ProtectedRoute>
                   <Layout>
                     <NotificationPreferences />
+                  </Layout>
+                </ProtectedRoute>
+              } />
+
+              <Route path="/admin" element={
+                <ProtectedRoute adminOnly>
+                  <Layout>
+                    <AdminDashboard />
+                  </Layout>
+                </ProtectedRoute>
+              } />
+
+              <Route path="/admin/disputes" element={
+                <ProtectedRoute adminOnly>
+                  <Layout>
+                    <DisputeQueue />
+                  </Layout>
+                </ProtectedRoute>
+              } />
+
+              <Route path="/admin/kyc" element={
+                <ProtectedRoute adminOnly>
+                  <Layout>
+                    <KYCQueue />
+                  </Layout>
+                </ProtectedRoute>
+              } />
+
+              <Route path="/admin/wallets" element={
+                <ProtectedRoute adminOnly>
+                  <Layout>
+                    <WalletManagement />
                   </Layout>
                 </ProtectedRoute>
               } />
